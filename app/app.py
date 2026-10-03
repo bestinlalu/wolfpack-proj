@@ -92,12 +92,52 @@ def stress_scale_html(level, usual) -> str:
 
 
 # ---------------------------------------------------------------- state
-store = open_store()
-pids = store.pids()
+CACHE_SECONDS = 60  # Databricks mode: how long results are reused before the next interaction reloads them
+
+
+@st.cache_resource(show_spinner="Connecting to Databricks…")
+def get_store():
+    return open_store()
+
+
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading from Databricks…")
+def _cached_pids(_store) -> list[str]:
+    return _store.pids()
+
+
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your data from Databricks…")
+def _cached_inputs(_store, pid: str):
+    return _store.read_inputs(pid)
+
+
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your lab notebook from Databricks…")
+def _cached_state(_store, pid: str):
+    return _store.read_state(pid)
+
+
+def clear_cache() -> None:
+    for fn in (_cached_pids, _cached_inputs, _cached_state):
+        fn.clear()
+
+
+# Local files are instant and change with every replay step, so only Databricks reads are cached.
+store = get_store()
+read_pids = (lambda: _cached_pids(store)) if store.read_only else store.pids
+read_inputs = (lambda p: _cached_inputs(store, p)) if store.read_only else store.read_inputs
+read_state = (lambda p: _cached_state(store, p)) if store.read_only else store.read_state
+
+pids = read_pids()
 if not pids:
     st.title("Body Lab")
-    st.info("No participants yet. Prepare data first:\n\n`python scripts/prepare.py --synthetic` (demo data) or "
-            "`python scripts/prepare.py --pid 001` after downloading the BIG IDEAs files.")
+    if store.read_only:
+        st.info("No results in Databricks yet. Run the `05_batch_all` notebook (or the streaming notebooks), "
+                "then press Refresh.")
+        if st.button("Refresh"):
+            clear_cache()
+            st.rerun()
+    else:
+        st.info("No participants yet. Prepare data first:\n\n`python scripts/prepare.py --synthetic` (demo data) or "
+                "`python scripts/prepare.py --pid 001` after downloading the BIG IDEAs files.")
     st.stop()
 
 users = [u for u in load_users() if u.pid in pids]
@@ -145,8 +185,8 @@ with st.sidebar:
 
 
 def load_engine(pid: str) -> Engine:
-    minute, meals = store.read_inputs(pid)
-    features, nb, until, _ = store.read_state(pid)
+    minute, meals = read_inputs(pid)
+    features, nb, until, _ = read_state(pid)
     eng = Engine(pid, minute, meals, nb, make_investigator(prefer_llm=use_llm))
     eng.features, eng.until = features, until
     return eng
@@ -161,8 +201,9 @@ with st.sidebar:
     pct = 0.0 if eng.until is None else (eng.until - eng.start) / (eng.end - eng.start)
     st.progress(min(max(pct, 0.0), 1.0), text=f"{now:%a %b %d, %H:%M}" if eng.until is not None else "Not started")
     if store.read_only:
-        st.caption("Streaming on Databricks; this view refreshes from the Delta tables.")
+        st.caption(f"Reading results from Databricks. Data is reused for {CACHE_SECONDS} seconds; Refresh loads the latest now.")
         if st.button("Refresh", use_container_width=True):
+            clear_cache()
             st.rerun()
     else:
         c1, c2 = st.columns(2)

@@ -81,6 +81,17 @@ def load_glucose(path: Path) -> pd.DataFrame:
     return out.dropna().sort_values("ts").reset_index(drop=True)
 
 
+STANDARD_FOOD_COLUMNS = ["date", "time", "time_begin", "time_end", "logged_food", "amount", "unit", "searched_food",
+                         "calorie", "total_carb", "dietary_fiber", "sugar", "protein", "total_fat"]
+
+
+def food_log_is_standard(path: Path) -> bool:
+    """True when the food log's header matches the standard columns; other layouts are skipped, not parsed."""
+    with open(path, encoding="utf-8-sig") as f:
+        header = [c.strip().lower() for c in f.readline().split(",")]
+    return header == STANDARD_FOOD_COLUMNS
+
+
 def load_food_log(path: Path) -> pd.DataFrame:
     df = _clean_columns(pd.read_csv(path, encoding="utf-8-sig"))
     df["ts"] = parse_ts(df["time_begin"].fillna(df["date"].astype(str) + " " + df["time"].astype(str)))

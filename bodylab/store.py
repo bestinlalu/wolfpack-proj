@@ -78,13 +78,17 @@ class DatabricksSqlStore:
     read_only = True
 
     def __init__(self):
+        self.catalog = os.getenv("BODYLAB_CATALOG", "workspace")
+        self.schema = os.getenv("BODYLAB_SCHEMA", "body_lab")
+        self.conn = self._connect()
+
+    @staticmethod
+    def _connect():
         from databricks import sql
         from databricks.sdk.core import Config
 
         cfg = Config()
-        self.catalog = os.getenv("BODYLAB_CATALOG", "workspace")
-        self.schema = os.getenv("BODYLAB_SCHEMA", "body_lab")
-        self.conn = sql.connect(
+        return sql.connect(
             server_hostname=cfg.host.replace("https://", ""),
             http_path=f"/sql/1.0/warehouses/{os.environ['DATABRICKS_WAREHOUSE_ID']}",
             credentials_provider=lambda: cfg.authenticate,
@@ -92,9 +96,21 @@ class DatabricksSqlStore:
 
     def _q(self, table: str, pid: str | None = None) -> pd.DataFrame:
         where = f" WHERE pid = '{pid}'" if pid and pid.isalnum() else ""
-        with self.conn.cursor() as cur:
-            cur.execute(f"SELECT * FROM {self.catalog}.{self.schema}.{table}{where}")
-            return cur.fetchall_arrow().to_pandas()
+        query = f"SELECT * FROM {self.catalog}.{self.schema}.{table}{where}"
+        for attempt in range(2):
+            try:
+                with self.conn.cursor() as cur:
+                    cur.execute(query)
+                    return cur.fetchall_arrow().to_pandas()
+            except Exception as exc:
+                # A missing table is a real answer; a dropped session (warehouse slept) gets one reconnect.
+                if attempt or "TABLE_OR_VIEW_NOT_FOUND" in str(exc):
+                    raise
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+                self.conn = self._connect()
 
     def pids(self) -> list[str]:
         return sorted(self._q("agent_state")["pid"].unique().tolist())
