@@ -48,7 +48,7 @@ from bodylab.engine import Engine
 
 dbutils.widgets.text("catalog", "workspace")
 dbutils.widgets.text("schema", "body_lab")
-dbutils.widgets.text("pid", "S01")
+dbutils.widgets.text("pid", "001")
 dbutils.widgets.text("minutes_to_run", "30")
 dbutils.widgets.dropdown("use_gemini", "yes", ["yes", "no"])
 catalog, schema, pid = dbutils.widgets.get("catalog"), dbutils.widgets.get("schema"), dbutils.widgets.get("pid")

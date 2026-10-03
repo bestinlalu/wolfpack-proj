@@ -22,6 +22,7 @@ from bodylab.labs import LABS  # noqa: E402
 from bodylab.pipeline.features import Signals  # noqa: E402
 from bodylab.store import open_store  # noqa: E402
 from bodylab.stress_scale import EXPLAINER, band  # noqa: E402
+from bodylab.users import check_password, find_by_email, load_users, password_required  # noqa: E402
 
 st.set_page_config(page_title="Body Lab", page_icon="🧪", layout="wide")
 
@@ -99,9 +100,46 @@ if not pids:
             "`python scripts/prepare.py --pid 001` after downloading the BIG IDEAs files.")
     st.stop()
 
+users = [u for u in load_users() if u.pid in pids]
+if not users:
+    st.title("Body Lab")
+    st.info("No user in bodylab/users.json has prepared data yet. Prepare a participant listed there, "
+            "for example `python scripts/prepare.py --pid 001`.")
+    st.stop()
+
+if st.session_state.get("username") not in {u.username for u in users}:
+    st.session_state.pop("username", None)
+    auto = find_by_email(users, st.context.headers.get("X-Forwarded-Email"))  # Databricks Apps sign-in
+    if auto is not None:
+        st.session_state["username"] = auto.username
+
+if "username" not in st.session_state:
+    _, middle, _ = st.columns([1, 2, 1])
+    with middle:
+        st.markdown("# 🧪 Body Lab")
+        st.markdown("Your personal body scientist. Sign in to see your lab.")
+        with st.form("sign_in"):
+            choice = st.selectbox("User", users, format_func=lambda u: u.label, key="signin_user")
+            attempt = st.text_input("Password", type="password", key="signin_password") if password_required() else ""
+            submitted = st.form_submit_button("Sign in", use_container_width=True)
+        if submitted:
+            if check_password(attempt):
+                st.session_state["username"] = choice.username
+                st.rerun()
+            else:
+                st.error("That password isn't right. Ask your team for the demo password.")
+        st.caption("Demo accounts: each user is assigned one participant's data from the BIG IDEAs dataset.")
+    st.stop()
+
+user = next(u for u in users if u.username == st.session_state["username"])
+pid = user.pid
+
 with st.sidebar:
     st.markdown("### 🧪 Body Lab")
-    pid = st.selectbox("Participant", pids, index=0)
+    st.caption(f"Signed in as **{escape(user.name)}** · {escape(user.label.split(' · ')[1])}")
+    if st.button("Sign out", use_container_width=True):
+        st.session_state.pop("username", None)
+        st.rerun()
     use_llm = st.toggle("Gemini agent", value=bool(gemini_api_key()), disabled=not gemini_api_key() or store.read_only,
                         help="Without GEMINI_API_KEY the rule-based investigator runs the same tools.")
 
@@ -176,7 +214,7 @@ with st.sidebar:
 
 if eng.until is None:
     st.title("Body Lab")
-    st.markdown(f"Participant **{escape(pid)}** has data from **{eng.start:%b %d}** to **{eng.end:%b %d}**. "
+    st.markdown(f"Hi {escape(user.name)}. Your data runs from **{eng.start:%b %d}** to **{eng.end:%b %d}**. "
                 "Use the replay controls on the left to stream it through the agent.")
     st.stop()
 
@@ -194,7 +232,8 @@ tab_today, tab_case, tab_disc, tab_nb = st.tabs(["Today", "Case", "Discoveries",
 # ---------------------------------------------------------------- Today
 with tab_today:
     rank, pts, nxt = nb.rank()
-    st.markdown(f"## {now:%A, %b %d}")
+    st.markdown(f"## Hi, {escape(user.name)}")
+    st.caption(f"{now:%A, %b %d, %H:%M} in the replay")
     left, right = st.columns([3, 2], gap="large")
     with left:
         feed = sorted(nb.messages, key=lambda m: pd.Timestamp(m["ts"]), reverse=True)

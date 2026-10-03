@@ -38,7 +38,7 @@ from bodylab.databricks_io import read_pid_table
 
 dbutils.widgets.text("catalog", "workspace")
 dbutils.widgets.text("schema", "body_lab")
-dbutils.widgets.text("pid", "S01")
+dbutils.widgets.text("pid", "001")
 dbutils.widgets.text("chunk_minutes", "30")
 dbutils.widgets.text("seconds_per_chunk", "2")
 dbutils.widgets.dropdown("reset", "yes", ["yes", "no"])

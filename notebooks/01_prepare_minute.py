@@ -3,7 +3,9 @@
 # MAGIC # 01 · Raw files to per-minute signals
 # MAGIC Spark reads each participant's wristband CSVs (accelerometer is about 800 MB per person), downsamples them
 # MAGIC to one row per minute, and joins glucose. Writes `minute_signals` and `meals` (one replaceable slice per participant).
-# MAGIC Set `pids` to `synthetic` to load the demo participant S01 instead of real files.
+# MAGIC `pids` defaults to the five participants assigned to users in `bodylab/users.json`. Participants whose files are
+# MAGIC missing are skipped with a message. Add `synthetic` to the list to also load the synthetic participant S01
+# MAGIC (planted effects, useful for checking the pipeline).
 
 # COMMAND ----------
 
@@ -39,7 +41,7 @@ from bodylab.databricks_io import write_pid_table
 
 dbutils.widgets.text("catalog", "workspace")
 dbutils.widgets.text("schema", "body_lab")
-dbutils.widgets.text("pids", "001")
+dbutils.widgets.text("pids", "001,002,003,004,005")
 catalog, schema = dbutils.widgets.get("catalog"), dbutils.widgets.get("schema")
 prefix = f"{catalog}.{schema}"
 raw = f"/Volumes/{catalog}/{schema}/raw"
@@ -82,11 +84,18 @@ def acc_per_minute(pid: str) -> pd.DataFrame:
 
 # COMMAND ----------
 
+NEEDED = ["ACC", "EDA", "TEMP", "HR", "Dexcom", "Food_Log"]
+done, skipped = [], []
 for pid in pids:
     if pid == "synthetic":
         minute, meals = synthetic.generate("S01", days=14)
         pid = "S01"
     else:
+        missing = [n for n in NEEDED if not os.path.exists(f"{raw}/{pid}/{n}_{pid}.csv")]
+        if missing:
+            print(f"{pid}: skipped, missing {', '.join(missing)} in {raw}/{pid}/ (run the download cell in 00_setup)")
+            skipped.append(pid)
+            continue
         wrist = acc_per_minute(pid)
         for name, col in (("hr", "hr"), ("eda", "eda"), ("temp", "temp")):
             wrist = wrist.merge(per_minute_mean(pid, name, col), on="ts", how="outer")
@@ -98,7 +107,9 @@ for pid in pids:
         meals = loader.group_meals(loader.load_food_log(f"{raw}/{pid}/Food_Log_{pid}.csv"), pid)
     write_pid_table(spark, minute, f"{prefix}.minute_signals", pid)
     write_pid_table(spark, meals, f"{prefix}.meals", pid)
+    done.append(pid)
     print(f"{pid}: {len(minute):,} minutes, {minute['glucose'].notna().sum():,} glucose readings, {len(meals)} meals, worn {minute['worn'].mean():.0%}")
+print(f"Prepared {len(done)} participant(s): {', '.join(done) or 'none'}" + (f"; skipped {', '.join(skipped)}" if skipped else ""))
 
 # COMMAND ----------
 
