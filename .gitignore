@@ -7,3 +7,8 @@ data/raw/
 .env
 *.mp3
 .DS_Store
+mobile/node_modules/
+
+mobile/.expo/
+
+mobile/.env

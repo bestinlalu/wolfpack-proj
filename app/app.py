@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from bodylab import meal_photo, voice  # noqa: E402
 from bodylab import patterns  # noqa: E402
 from bodylab.agent.investigator import make_investigator  # noqa: E402
+from bodylab.agent.chat import BodyLabChat  # noqa: E402
 from bodylab.formatting import fmt as _fmt  # noqa: E402
 from bodylab.config import elevenlabs_api_key, gemini_api_key  # noqa: E402
 from bodylab.engine import Engine  # noqa: E402
@@ -258,7 +259,7 @@ def signals_frame(pid: str, until: str) -> pd.DataFrame:
 
 sig_df = signals_frame(pid, str(eng.until))
 
-tab_today, tab_case, tab_disc, tab_nb = st.tabs(["Today", "Case", "Discoveries", "Notebook"])
+tab_today, tab_case, tab_disc, tab_nb, tab_chat = st.tabs(["Today", "Case", "Discoveries", "Notebook", "💬 Ask Body Lab"])
 
 # ---------------------------------------------------------------- Today
 with tab_today:
@@ -463,3 +464,60 @@ with tab_nb:
         good = sum(bool(p.get("good_data", True)) for p in nb.processed)
         card(f'<div class="bl-label">Situations watched</div><div class="bl-big bl-num">{processed}</div>'
              f'<div class="bl-sub">{good} passed the data check and counted as natural experiments.</div>')
+
+
+# ---------------------------------------------------------------- Ask Body Lab
+with tab_chat:
+    st.markdown("## Ask Body Lab")
+    st.caption("Ask about patterns, discoveries, hypotheses, and cases Body Lab has actually observed in your data.")
+
+    if not gemini_api_key():
+        st.info("Set `GEMINI_API_KEY` to enable Ask Body Lab.")
+    else:
+        chat_key = f"bodylab_chat_{pid}"
+        if chat_key not in st.session_state:
+            st.session_state[chat_key] = []
+
+        starter_questions = [
+            "What have you learned about me so far?",
+            "Which hypothesis has the strongest evidence?",
+            "Have any of your ideas been proven wrong?",
+            "What should Body Lab investigate next?",
+        ]
+        if not st.session_state[chat_key]:
+            st.markdown('<div class="bl-label">Try asking</div>', unsafe_allow_html=True)
+            cols = st.columns(2)
+            for i, starter in enumerate(starter_questions):
+                if cols[i % 2].button(starter, key=f"starter_{pid}_{i}", use_container_width=True):
+                    st.session_state[f"bodylab_pending_{pid}"] = starter
+                    st.rerun()
+
+        for message in st.session_state[chat_key]:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        typed = st.chat_input("Ask about your Body Lab data…", key=f"chat_input_{pid}")
+        pending_key = f"bodylab_pending_{pid}"
+        prompt = st.session_state.pop(pending_key, None) or typed
+
+        if prompt:
+            history = list(st.session_state[chat_key])
+            st.session_state[chat_key].append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant"):
+                try:
+                    with st.spinner("Reading your lab notebook…"):
+                        chatbot = BodyLabChat(nb, eng.features, pd.Timestamp(now))
+                        answer = chatbot.ask(prompt, history=history)
+                    st.markdown(answer)
+                except Exception as exc:
+                    answer = "I couldn't query the Body Lab notebook right now. Please try again in a moment."
+                    st.error(answer)
+                    st.caption(str(exc))
+            st.session_state[chat_key].append({"role": "assistant", "content": answer})
+
+        if st.session_state[chat_key]:
+            if st.button("Clear chat", key=f"clear_chat_{pid}"):
+                st.session_state[chat_key] = []
+                st.rerun()
