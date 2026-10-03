@@ -7,3 +7,5 @@ requests>=2.31
 google-genai>=1.30
 databricks-sql-connector>=3.0
 databricks-sdk>=0.30
+fastapi>=0.115
+uvicorn[standard]>=0.30
