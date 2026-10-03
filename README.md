@@ -264,6 +264,8 @@ Tools Gemini can call (in [`bodylab/agent/tools.py`](bodylab/agent/tools.py)):
 
 Evidence recording, lifecycle rules, discovery cards and quests are run by the engine ([`bodylab/engine.py`](bodylab/engine.py)) on every new situation, not by the language model, so they are deterministic and cheap. Without a Gemini key, a rule-based investigator calls the same tools in a fixed order; with a key, any Gemini error falls back to it.
 
+Hypotheses appear as short questions under **Possible patterns**, with a brief note about the observation that started them. Green check dots mark matches, red cross dots mark observations that did not match, and the adjacent label shows the total matched count. Active patterns carry a **Tracking automatically** badge. Discovery previews use pattern names instead of internal hypothesis IDs; **Solved** remains the case label. These are display changes only and do not alter evidence or confirmation rules.
+
 ### Lab notebook tables
 
 | Table | Key columns |
