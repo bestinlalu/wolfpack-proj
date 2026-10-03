@@ -55,20 +55,22 @@ def read_signal(pid: str, name: str):
           .option("ignoreTrailingWhiteSpace", True).csv(f"{raw}/{pid}/{name}_{pid}.csv"))
     for c in df.columns:
         df = df.withColumnRenamed(c, c.strip().lstrip("﻿").lower())
-    ts = F.coalesce(F.to_timestamp("datetime"), F.to_timestamp("datetime", "M/d/yy H:mm"), F.to_timestamp("datetime", "M/d/yy H:mm:ss"))
+    # Serverless runs in ANSI mode, where a failed parse is an error; try_ versions return NULL so each format gets a turn.
+    ts = F.coalesce(F.expr("try_to_timestamp(datetime)"), F.expr("try_to_timestamp(datetime, 'M/d/yy H:mm')"),
+                    F.expr("try_to_timestamp(datetime, 'M/d/yy H:mm:ss')"))
     return df.withColumn("datetime", ts).where(F.col("datetime").isNotNull())
 
 
 def per_minute_mean(pid: str, name: str, col: str) -> pd.DataFrame:
     df = read_signal(pid, name.upper())
     return (df.groupBy(F.date_trunc("minute", "datetime").alias("ts"))
-              .agg(F.avg(F.col(col).cast("double")).alias(col)).toPandas())
+              .agg(F.avg(F.expr(f"try_cast(`{col}` AS DOUBLE)")).alias(col)).toPandas())
 
 
 def acc_per_minute(pid: str) -> pd.DataFrame:
     df = read_signal(pid, "ACC")
     for c in ("acc_x", "acc_y", "acc_z"):
-        df = df.withColumn(c, F.col(c).cast("double"))
+        df = df.withColumn(c, F.expr(f"try_cast(`{c}` AS DOUBLE)"))
 
     def per_hour(pdf: pd.DataFrame) -> pd.DataFrame:
         pdf = pdf.sort_values("datetime")
