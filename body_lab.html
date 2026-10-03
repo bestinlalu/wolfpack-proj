@@ -1,0 +1,497 @@
+<title>Body Lab</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: lab-notebook graph paper page, single phone frame centered, four tab screens inside */
+:root {
+  --paper: #eef3f1; --grid: rgba(19,38,43,0.055); --card: #ffffff; --sunk: #f4f7f6;
+  --ink: #13262b; --ink-2: #4b5d61; --ink-3: #82918e; --line: rgba(19,38,43,0.12);
+  --accent: #2b55c9; --accent-soft: #e5ebfb; --on-accent: #ffffff;
+  --glucose: #d4532a; --glucose-soft: #fbe6dd;
+  --ok: #2c8556; --ok-soft: #e0f1e7; --warn: #a86c12; --warn-soft: #f8ecd6;
+  --gold: #9a6d05; --gold-soft: #f7edcf;
+  --frame: #13262b;
+  --f-display: 'Bricolage Grotesque', 'Avenir Next', system-ui, sans-serif;
+  --f-body: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper: #0d1416; --grid: rgba(255,255,255,0.035); --card: #162125; --sunk: #1c292d;
+  --ink: #e4ecea; --ink-2: #a7b6b3; --ink-3: #6e7e7b; --line: rgba(255,255,255,0.1);
+  --accent: #82a1f2; --accent-soft: #1b2949; --on-accent: #0d1416;
+  --glucose: #f08b63; --glucose-soft: #3b2219;
+  --ok: #5fc58e; --ok-soft: #133023; --warn: #e2aa4c; --warn-soft: #36270d;
+  --gold: #e3bb4f; --gold-soft: #372b0e; --frame: #04090a; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --paper: #0d1416; --grid: rgba(255,255,255,0.035); --card: #162125; --sunk: #1c292d;
+  --ink: #e4ecea; --ink-2: #a7b6b3; --ink-3: #6e7e7b; --line: rgba(255,255,255,0.1);
+  --accent: #82a1f2; --accent-soft: #1b2949; --on-accent: #0d1416;
+  --glucose: #f08b63; --glucose-soft: #3b2219;
+  --ok: #5fc58e; --ok-soft: #133023; --warn: #e2aa4c; --warn-soft: #36270d;
+  --gold: #e3bb4f; --gold-soft: #372b0e; --frame: #04090a; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; font-family: var(--f-body); color: var(--ink); font-size: 14px; line-height: 1.5;
+  background-color: var(--paper);
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.page { max-width: 1040px; margin: 0 auto; padding-block: 32px 48px; padding-inline: 16px;
+  display: grid; grid-template-columns: minmax(0,1fr) 400px; gap: 40px; align-items: start; }
+.intro { padding-top: 24px; min-width: 0; }
+.eyebrow { font-family: var(--f-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.intro h1 { font-family: var(--f-display); font-weight: 700; font-size: 44px; line-height: 1.05; margin: 8px 0 12px; letter-spacing: -0.02em; text-wrap: balance; }
+.intro p { color: var(--ink-2); max-width: 46ch; margin: 0 0 16px; }
+.flow { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 10px; max-width: 46ch; }
+.flow li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; color: var(--ink-2); }
+.flow b { font-family: var(--f-mono); font-weight: 500; color: var(--ink-3); font-size: 12px; padding-top: 2px; }
+.flow span strong { color: var(--ink); font-weight: 600; }
+.note { margin-top: 24px; font-family: var(--f-mono); font-size: 11px; color: var(--ink-3); }
+
+.phone { background: var(--frame); border-radius: 44px; padding: 12px; }
+.screen { background: var(--paper); border-radius: 34px; height: 800px; display: flex; flex-direction: column; overflow: hidden; }
+.statusbar { display: flex; justify-content: space-between; padding: 14px 26px 6px; font-family: var(--f-mono); font-size: 12px; color: var(--ink-2); }
+.scroll { flex: 1; overflow-y: auto; padding: 8px 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+.tabbar { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); background: var(--card); padding: 8px 6px 14px; }
+.tabbar button { background: none; border: 0; font: 500 11px var(--f-body); color: var(--ink-3); padding: 6px 0; cursor: pointer; display: grid; justify-items: center; gap: 3px; border-radius: 10px; }
+.tabbar button svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.6; }
+.tabbar button[aria-selected="true"] { color: var(--accent); }
+.tabbar button:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px; }
+.h-screen { font-family: var(--f-display); font-weight: 700; font-size: 26px; letter-spacing: -0.015em; margin: 4px 0 0; }
+.sub { color: var(--ink-3); font-size: 12.5px; }
+.label { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 8px; }
+.row { display: flex; align-items: center; gap: 10px; }
+.spacer { flex: 1; }
+.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.pill { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.p-accent { background: var(--accent-soft); color: var(--accent); }
+.p-glu { background: var(--glucose-soft); color: var(--glucose); }
+.p-ok { background: var(--ok-soft); color: var(--ok); }
+.p-warn { background: var(--warn-soft); color: var(--warn); }
+.p-gold { background: var(--gold-soft); color: var(--gold); }
+.p-plain { background: var(--sunk); color: var(--ink-2); }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 12px; padding: 10px 14px; font: 600 13px var(--f-body); cursor: pointer; background: var(--accent); color: var(--on-accent); width: 100%; }
+.btn.ghost { background: var(--sunk); color: var(--ink); }
+
+/* rank */
+.rank { display: grid; grid-template-columns: 52px 1fr; gap: 12px; align-items: center; }
+.badge { width: 52px; height: 52px; border-radius: 16px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-family: var(--f-display); font-weight: 700; font-size: 20px; }
+.bar { height: 6px; border-radius: 999px; background: var(--sunk); overflow: hidden; margin-top: 8px; }
+.bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+
+/* case teaser */
+.case-teaser { border-color: var(--glucose); border-width: 1.5px; }
+.vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; margin: 12px 0; text-align: center; }
+.vs .big { font-family: var(--f-display); font-weight: 700; font-size: 30px; line-height: 1; }
+.vs .muted { color: var(--ink-3); }
+.vs small { display: block; color: var(--ink-3); font-size: 11.5px; margin-top: 4px; }
+
+/* labs */
+.labs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.lab { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px; }
+.lab h4 { margin: 0 0 2px; font-size: 14px; font-weight: 600; }
+.lab .src { font-family: var(--f-mono); font-size: 10px; color: var(--ink-3); }
+.lab .stats { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+
+/* quest */
+.dots { display: flex; gap: 6px; }
+.dots i { width: 22px; height: 6px; border-radius: 3px; background: var(--sunk); }
+.dots i.on { background: var(--ok); }
+
+/* chart */
+.chart svg { width: 100%; height: auto; display: block; }
+.legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--ink-2); margin-top: 6px; flex-wrap: wrap; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 18px; height: 0; border-top: 2.5px solid; }
+
+/* diffs */
+.diff { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.diff:first-of-type { border-top: 0; }
+.diff .name { font-weight: 500; }
+.diff .vals { color: var(--ink-3); font-size: 12px; grid-column: 1 / -1; }
+.meter { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--sunk); position: relative; }
+.meter i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
+.meter .band { position: absolute; left: 0; width: 40%; top: -3px; bottom: -3px; border-left: 1px dashed var(--ink-3); border-right: 1px dashed var(--ink-3); opacity: .6; }
+.checks { display: grid; gap: 6px; font-size: 12.5px; color: var(--ink-2); }
+.checks span::before { content: "✓"; color: var(--ok); font-weight: 700; margin-right: 8px; }
+
+/* discoveries */
+.deck { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.disc { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 172px; }
+.disc.rare { border: 1.5px solid var(--accent); }
+.disc.legend { border: 1.5px solid var(--gold); }
+.disc h4 { font-family: var(--f-display); font-weight: 700; font-size: 16px; line-height: 1.15; margin: 0; }
+.disc p { margin: 0; font-size: 12px; color: var(--ink-2); }
+.disc .effect { font-family: var(--f-display); font-weight: 700; font-size: 26px; line-height: 1; margin-top: auto; }
+.disc .meta { font-family: var(--f-mono); font-size: 10.5px; color: var(--ink-3); }
+.disc.locked { background: transparent; border: 1.5px dashed var(--line); align-items: center; justify-content: center; text-align: center; color: var(--ink-3); }
+.disc.locked h4 { font-size: 22px; color: var(--ink-3); }
+.disc.fading { opacity: .72; }
+
+/* notebook */
+.hyp { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
+.hyp:first-of-type { border-top: 0; padding-top: 2px; }
+.hyp .claim { font-weight: 500; }
+.ev { display: flex; gap: 5px; align-items: center; }
+.ev i { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--line); }
+.ev i.s { background: var(--ok); border-color: var(--ok); }
+.ev i.c { background: var(--glucose); border-color: var(--glucose); }
+.ev small { margin-left: 6px; color: var(--ink-3); font-size: 11.5px; }
+.funnel { display: grid; gap: 6px; }
+.funnel .f { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; font-size: 12.5px; }
+.funnel .track { grid-column: 1 / -1; height: 8px; background: var(--sunk); border-radius: 4px; overflow: hidden; }
+.funnel .track i { display: block; height: 100%; border-radius: 4px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .scroll > * { animation: rise .35s ease both; }
+  @keyframes rise { from { transform: translateY(6px); opacity: .4; } to { transform: none; opacity: 1; } }
+}
+@media (max-width: 860px) {
+  .page { grid-template-columns: 1fr; gap: 24px; }
+  .intro { padding-top: 0; }
+  .intro h1 { font-size: 34px; }
+  .phone { max-width: 400px; width: 100%; margin: 0 auto; }
+}
+@media (max-width: 440px) {
+  .phone { padding: 0; background: none; border-radius: 0; }
+  .screen { border-radius: 20px; height: 760px; border: 1px solid var(--line); }
+}
+</style>
+
+<div class="page">
+  <section class="intro">
+    <div class="eyebrow">WolfHacks · Applied AI Software track</div>
+    <h1>Body Lab</h1>
+    <p>A personal scientist for your body. When your body reacts differently to a familiar situation, the agent investigates quietly, opens a hypothesis, and confirms it from your everyday life. No journaling, and no "something was unusual" alerts: you only hear from it when it has an answer.</p>
+    <ul class="flow">
+      <li><b>01</b><span><strong>Today:</strong> solved cases and confirmed discoveries, each leading with the why, plus rank, an auto-tracked quest and the four labs.</span></li>
+      <li><b>02</b><span><strong>Case:</strong> two similar meals, two different spikes. Data checks first, then what was different.</span></li>
+      <li><b>03</b><span><strong>Discoveries:</strong> patterns confirmed by repeated natural experiments become cards.</span></li>
+      <li><b>04</b><span><strong>Notebook:</strong> open hypotheses, evidence so far, and how many surprises turned out to be noise.</span></li>
+    </ul>
+    <p class="note">Example data for illustration. All four labs run on one person's data from the BIG IDEAs dataset, so the agent can link findings across labs. Sleep is estimated from the wristband.</p>
+  </section>
+
+  <div class="phone" role="region" aria-label="Body Lab app mockup">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span>Replay · Day 6 of 10</span></div>
+
+      <!-- TODAY -->
+      <div class="scroll" id="tab-today">
+        <div>
+          <div class="sub">Sunday evening</div>
+          <div class="h-screen">Hi, Sam</div>
+        </div>
+
+        <div class="card rank">
+          <div class="badge">R</div>
+          <div>
+            <div class="row"><strong>Researcher</strong><span class="spacer"></span><span class="sub num">12 / 20</span></div>
+            <div class="sub">8 more discoveries to reach Professor</div>
+            <div class="bar"><i style="width:60%"></i></div>
+          </div>
+        </div>
+
+        <div class="card" style="border-color:var(--ok); border-width:1.5px">
+          <div class="row"><span class="pill p-ok">Discovery confirmed</span><span class="spacer"></span><span class="pill p-plain">Movement</span></div>
+          <div style="font-weight:600; margin-top:10px;">After short nights, your walks run 12 bpm higher</div>
+          <p class="sub" style="margin:4px 0 0">Same 30-minute walk, compared after nights under 6 hours vs your usual 7. Held in 4 of 5 tests.</p>
+        </div>
+
+        <div class="card case-teaser">
+          <div class="row"><span class="pill p-glu">Case solved</span><span class="spacer"></span><span class="sub num">#014 · Fuel</span></div>
+          <div style="font-weight:600; margin-top:10px;">Thursday's lunch spiked because you barely moved before eating</div>
+          <div class="vs">
+            <div><div class="big muted num">+25</div><small>Tue · 2,140 steps before</small></div>
+            <div class="sub">vs</div>
+            <div><div class="big num" style="color:var(--glucose)">+70</div><small>Thu · 180 steps before</small></div>
+          </div>
+          <p class="sub" style="margin:0 0 12px">Same pasta, same carbs. First time seen: 1 of 3 tests needed to confirm.</p>
+          <button class="btn" data-go="case">See the investigation</button>
+        </div>
+
+        <div class="card">
+          <p class="label">Closed quietly this week</p>
+          <div class="row"><span>3 surprises with no clear reason</span><span class="spacer"></span><span class="pill p-plain num">3</span></div>
+          <div class="row" style="margin-top:6px"><span>2 dismissed as bad sensor data</span><span class="spacer"></span><span class="pill p-warn num">2</span></div>
+          <p class="sub" style="margin:8px 0 0">No alerts were sent for these. Details are in the Notebook.</p>
+        </div>
+
+        <div class="card">
+          <p class="label">Quest this week · optional</p>
+          <div class="row" style="align-items:flex-start">
+            <div style="flex:1">
+              <div style="font-weight:600">Walk 10 minutes after any meal</div>
+              <div class="sub">Detected automatically from your wristband</div>
+            </div>
+            <span class="pill p-ok num">2 / 3</span>
+          </div>
+          <div class="dots" style="margin-top:10px"><i class="on"></i><i class="on"></i><i></i></div>
+        </div>
+
+        <div>
+          <p class="label">Your labs</p>
+          <div class="labs">
+            <div class="lab"><h4>Fuel</h4><div class="src">glucose · meals</div><div class="stats"><span class="pill p-accent">5 cards</span><span class="pill p-plain">2 open</span></div></div>
+            <div class="lab"><h4>Stress</h4><div class="src">EDA · heart rate</div><div class="stats"><span class="pill p-accent">3 cards</span><span class="pill p-plain">0 open</span></div></div>
+            <div class="lab"><h4>Sleep</h4><div class="src">night stillness · heart</div><div class="stats"><span class="pill p-accent">2 cards</span><span class="pill p-plain">1 open</span></div></div>
+            <div class="lab"><h4>Movement</h4><div class="src">walks · heart · temp</div><div class="stats"><span class="pill p-accent">2 cards</span><span class="pill p-plain">1 open</span></div></div>
+          </div>
+        </div>
+
+        <button class="btn ghost" type="button" aria-label="Play weekly voice recap, 30 seconds">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+          Weekly recap · 0:30 voice
+        </button>
+      </div>
+
+      <!-- CASE -->
+      <div class="scroll" id="tab-case" hidden>
+        <div>
+          <div class="sub num">Case #014 · Fuel Lab</div>
+          <div class="h-screen">Why did Thursday spike?</div>
+        </div>
+
+        <div class="card chart">
+          <p class="label">Glucose after lunch · mg/dL</p>
+          <svg id="chart" viewBox="0 0 320 180" role="img" aria-label="Glucose curves for two similar pasta lunches. Tuesday rises 25 mg/dL and peaks at 121. Thursday rises 70 and peaks at 171 about 60 minutes after eating."></svg>
+          <div class="legend">
+            <span><i class="swatch" style="border-color:var(--ink-3); border-top-style:dashed"></i>Tue 12:05 · pasta, 62 g carbs</span>
+            <span><i class="swatch" style="border-color:var(--glucose)"></i>Thu 13:40 · pasta, 64 g carbs</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <p class="label">Step 1 · Data check</p>
+          <div class="checks">
+            <span>Glucose sensor in normal range, no gaps</span>
+            <span>Meal log complete, no snack within 3 hours</span>
+            <span>Spike is in your top 5% for similar meals</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <p class="label">Step 2 · What was different</p>
+          <div class="diff">
+            <span class="name">Steps in the hour before</span><span class="pill p-glu">Very unusual</span>
+            <div class="meter"><span class="band"></span><i style="width:92%; background:var(--glucose)"></i></div>
+            <span class="vals num">Tue 2,140 · Thu 180</span>
+          </div>
+          <div class="diff">
+            <span class="name">Time of day</span><span class="pill p-warn">Somewhat</span>
+            <div class="meter"><span class="band"></span><i style="width:55%; background:var(--warn)"></i></div>
+            <span class="vals num">Tue 12:05 · Thu 13:40</span>
+          </div>
+          <div class="diff">
+            <span class="name">Stress before eating (EDA)</span><span class="pill p-plain">Normal</span>
+            <div class="meter"><span class="band"></span><i style="width:22%; background:var(--ink-3)"></i></div>
+            <span class="vals num">Both within your usual range</span>
+          </div>
+          <div class="diff">
+            <span class="name">Carbs logged</span><span class="pill p-plain">Same</span>
+            <div class="meter"><span class="band"></span><i style="width:6%; background:var(--ink-3)"></i></div>
+            <span class="vals num">62 g · 64 g</span>
+          </div>
+          <div class="sub" style="margin-top:6px">Dashed band = your normal day-to-day variation</div>
+        </div>
+
+        <div class="card" style="border-color:var(--accent); border-width:1.5px">
+          <p class="label">Step 3 · Verdict</p>
+          <div style="font-weight:600">Lead, not a discovery yet</div>
+          <p class="sub" style="margin:4px 0 12px">Opened hypothesis H7. It needs 3 matching meals from your normal routine to become a card. Expires after 5 chances with no clear result.</p>
+          <button class="btn" data-go="notebook">See it in the notebook</button>
+        </div>
+      </div>
+
+      <!-- DISCOVERIES -->
+      <div class="scroll" id="tab-discoveries" hidden>
+        <div>
+          <div class="sub num">12 collected · 4 labs</div>
+          <div class="h-screen">Discoveries</div>
+        </div>
+        <div class="row" style="gap:6px; flex-wrap:wrap">
+          <span class="pill p-gold">Legendary 1</span><span class="pill p-accent">Rare 4</span><span class="pill p-plain">Common 7</span>
+        </div>
+        <div class="deck">
+          <div class="disc legend">
+            <span class="pill p-gold" style="align-self:flex-start">Legendary · Fuel</span>
+            <h4>Stress Multiplier</h4>
+            <p>Meals eaten during a stress peak spike much higher for you</p>
+            <div class="effect num" style="color:var(--glucose)">+55%</div>
+            <div class="meta">5 of 6 tests · rare for your profile</div>
+          </div>
+          <div class="disc rare">
+            <span class="pill p-accent" style="align-self:flex-start">Rare · Fuel</span>
+            <h4>The Pre-Lunch Walk</h4>
+            <p>Walking in the hour before lunch shrinks your spike</p>
+            <div class="effect num" style="color:var(--ok)">−40%</div>
+            <div class="meta">4 of 5 tests</div>
+          </div>
+          <div class="disc rare">
+            <span class="pill p-accent" style="align-self:flex-start">Rare · Sleep</span>
+            <h4>Night Owl Lag</h4>
+            <p>Activity after 10pm delays when you fall asleep</p>
+            <div class="effect num">+45 min</div>
+            <div class="meta">3 of 3 tests · estimated sleep</div>
+          </div>
+          <div class="disc rare">
+            <span class="pill p-accent" style="align-self:flex-start">Rare · Movement</span>
+            <h4>Short-Night Walks</h4>
+            <p>After nights under 6 hours, the same walk pushes your heart rate higher</p>
+            <div class="effect num" style="color:var(--glucose)">+12 bpm</div>
+            <div class="meta">4 of 5 tests</div>
+          </div>
+          <div class="disc">
+            <span class="pill p-plain" style="align-self:flex-start">Common · Movement</span>
+            <h4>Weekend Shift</h4>
+            <p>Your active hours start about 2 hours later on weekends</p>
+            <div class="effect num">+2 h</div>
+            <div class="meta">2 of 2 weekends</div>
+          </div>
+          <div class="disc">
+            <span class="pill p-plain" style="align-self:flex-start">Common · Stress</span>
+            <h4>Afternoon Wave</h4>
+            <p>Your stress signal peaks on weekday afternoons</p>
+            <div class="effect num">2–4pm</div>
+            <div class="meta">7 of 8 weekdays</div>
+          </div>
+          <div class="disc fading">
+            <span class="pill p-warn" style="align-self:flex-start">Fading · Fuel</span>
+            <h4>Late Dinner Penalty</h4>
+            <p>Dinners after 8pm spike higher. Common for most people, and recent meals disagree</p>
+            <div class="effect num">+18%</div>
+            <div class="meta">3 of 6 tests · rechecking</div>
+          </div>
+          <div class="disc locked">
+            <h4>?</h4>
+            <p>Sleep Lab<br>H9 is 1 test away</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- NOTEBOOK -->
+      <div class="scroll" id="tab-notebook" hidden>
+        <div>
+          <div class="sub">The agent's lab notebook</div>
+          <div class="h-screen">Notebook</div>
+        </div>
+
+        <div class="card">
+          <p class="label">Open hypotheses · 4 of 10 slots · meal-related 2 of 2 max</p>
+          <div class="hyp">
+            <div class="row"><span class="pill p-accent num">H7</span><span class="spacer"></span><span class="pill p-plain">Testing</span></div>
+            <div class="claim">Fewer steps before lunch → bigger spike</div>
+            <div class="ev"><i class="s"></i><i></i><i></i><small>1 support · needs 3</small></div>
+          </div>
+          <div class="hyp">
+            <div class="row"><span class="pill p-accent num">H9</span><span class="spacer"></span><span class="pill p-ok">Almost there</span></div>
+            <div class="claim">Warmer skin at night → more restless sleep</div>
+            <div class="ev"><i class="s"></i><i class="s"></i><i></i><small>2 support · 1 to go</small></div>
+          </div>
+          <div class="hyp">
+            <div class="row"><span class="pill p-accent num">H8</span><span class="spacer"></span><span class="pill p-warn">Doubtful</span></div>
+            <div class="claim">High-fat lunches → smaller afternoon spike</div>
+            <div class="ev"><i class="s"></i><i class="c"></i><i class="c"></i><small>1 support · 2 against</small></div>
+          </div>
+          <div class="hyp">
+            <div class="row"><span class="pill p-accent num">H6</span><span class="spacer"></span><span class="pill p-plain">Waiting</span></div>
+            <div class="claim">Heart rate settles slower after evening walks than morning walks</div>
+            <div class="ev"><i></i><i></i><i></i><small>No evening walk in 3 days to test</small></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <p class="label">Every surprise so far</p>
+          <div class="funnel" id="funnel"></div>
+          <p class="sub" style="margin:10px 0 0">Most surprises are noise or bad data. Only repeated patterns become discoveries.</p>
+        </div>
+
+        <div class="card">
+          <p class="label">Recently closed</p>
+          <div class="hyp">
+            <div class="row"><span class="pill p-plain num">H5</span><span class="spacer"></span><span class="pill p-glu">Rejected</span></div>
+            <div class="claim">Coffee before breakfast → bigger spike</div>
+            <div class="sub">Held in 1 of 4 meals. Logged as noise.</div>
+          </div>
+        </div>
+      </div>
+
+      <nav class="tabbar" role="tablist" aria-label="Sections">
+        <button role="tab" aria-selected="true" data-tab="today"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>Today</button>
+        <button role="tab" aria-selected="false" data-tab="case"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>Case</button>
+        <button role="tab" aria-selected="false" data-tab="discoveries"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="11" height="15" rx="2"/><path d="M9 3h9a2 2 0 0 1 2 2v12"/></svg>Discoveries</button>
+        <button role="tab" aria-selected="false" data-tab="notebook"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h10a2 2 0 0 1 2 2v16l-3-2-3 2-3-2-3 2V5a2 2 0 0 1 0 0z"/><path d="M9 8h6M9 12h6"/></svg>Notebook</button>
+      </nav>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const tabs = ["today", "case", "discoveries", "notebook"];
+  function show(name) {
+    tabs.forEach(t => {
+      document.getElementById("tab-" + t).hidden = t !== name;
+      document.querySelector('[data-tab="' + t + '"]').setAttribute("aria-selected", t === name ? "true" : "false");
+    });
+    document.getElementById("tab-" + name).scrollTop = 0;
+  }
+  document.querySelectorAll("[data-tab]").forEach(b => b.addEventListener("click", () => show(b.dataset.tab)));
+  document.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => show(b.dataset.go)));
+
+  const tue = [96, 99, 106, 114, 119, 121, 120, 116, 111, 106, 102, 99, 97];
+  const thu = [101, 108, 124, 143, 160, 169, 171, 165, 152, 138, 124, 113, 106];
+  const W = 320, H = 180, L = 32, R = 10, T = 10, B = 26;
+  const yMin = 80, yMax = 180;
+  const x = i => L + (i / 12) * (W - L - R);
+  const y = v => T + (1 - (v - yMin) / (yMax - yMin)) * (H - T - B);
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("chart");
+  function el(tag, attrs, text) {
+    const e = document.createElementNS(ns, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    svg.appendChild(e);
+    return e;
+  }
+  [80, 110, 140, 170].forEach(v => {
+    el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: "var(--line)", "stroke-width": 1 });
+    el("text", { x: L - 6, y: y(v) + 3.5, "text-anchor": "end", "font-size": 10, fill: "var(--ink-3)", "font-family": "IBM Plex Mono, monospace" }, v);
+  });
+  [0, 30, 60, 90, 120].forEach(m => {
+    el("text", { x: x(m / 10), y: H - 8, "text-anchor": "middle", "font-size": 10, fill: "var(--ink-3)", "font-family": "IBM Plex Mono, monospace" }, m === 0 ? "0 min" : m);
+  });
+  const path = arr => arr.map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1)).join(" ");
+  const area = path(thu) + " L" + x(12) + "," + (H - B) + " L" + x(0) + "," + (H - B) + " Z";
+  el("path", { d: area, fill: "var(--glucose)", opacity: 0.1 });
+  el("path", { d: path(tue), fill: "none", stroke: "var(--ink-3)", "stroke-width": 2, "stroke-dasharray": "5 4", "stroke-linecap": "round" });
+  el("path", { d: path(thu), fill: "none", stroke: "var(--glucose)", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" });
+  el("circle", { cx: x(6), cy: y(171), r: 4.5, fill: "var(--glucose)", stroke: "var(--card)", "stroke-width": 2 });
+  el("text", { x: x(6) + 8, y: y(171) + 4, "font-size": 11, fill: "var(--ink)", "font-weight": 600, "font-family": "IBM Plex Mono, monospace" }, "171");
+  el("circle", { cx: x(5), cy: y(121), r: 3.5, fill: "var(--ink-3)", stroke: "var(--card)", "stroke-width": 2 });
+  el("text", { x: x(5), y: y(121) - 8, "text-anchor": "middle", "font-size": 11, fill: "var(--ink-2)", "font-family": "IBM Plex Mono, monospace" }, "121");
+
+  const funnel = [
+    ["Surprising events", 120, "var(--ink-3)"],
+    ["Bad data, dismissed", 30, "var(--warn)"],
+    ["Normal variation", 50, "var(--ink-3)"],
+    ["Became hypotheses", 40, "var(--accent)"],
+    ["Confirmed discoveries", 12, "var(--ok)"]
+  ];
+  const f = document.getElementById("funnel");
+  funnel.forEach(([name, n, c]) => {
+    const row = document.createElement("div");
+    row.className = "f";
+    row.innerHTML = '<span></span><span class="num"></span><div class="track"><i></i></div>';
+    row.children[0].textContent = name;
+    row.children[1].textContent = n;
+    const bar = row.querySelector("i");
+    bar.style.width = Math.round((n / 120) * 100) + "%";
+    bar.style.background = c;
+    f.appendChild(row);
+  });
+})();
+</script>
+
