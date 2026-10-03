@@ -13,6 +13,8 @@ def fmt(v, unit: str) -> str:
         return f"{v:.0f} {unit}" if unit != "°C" else f"{v:.1f} °C"
     if unit == "z":  # stress signal, in units of the person's own spread
         return "calm" if v <= -0.5 else "typical" if v < 1 else "elevated" if v < 2.5 else "high"
+    if unit == "level":  # personal stress level, see bodylab/stress_scale.py
+        return f"{int(v)}/10"
     if unit == "flag":
         return "weekend" if v >= 0.5 else "weekday"
     if unit == "clock":

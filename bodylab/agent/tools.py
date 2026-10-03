@@ -12,6 +12,7 @@ from bodylab.config import SETTINGS
 from bodylab.formatting import fmt
 from bodylab.labs import LABS, cause
 from bodylab.pipeline.features import Signals, robust_scale
+from bodylab.stress_scale import stress_level
 
 FLOORS = {"steps": 500.0, "z": 0.3, "h": 0.75, "clock": 0.75, "mg/dL": 5.0, "°C": 0.3, "flag": 0.5}
 
@@ -44,13 +45,27 @@ class ToolContext:
         df = self.features[lab]
         return df[df["end_ts"] <= before]
 
+    def stress_level(self, value, before: pd.Timestamp) -> int | None:
+        """Personal 1-10 level of a raw stress signal, ranked against windows finished before `before`."""
+        df = self.features.get("stress")
+        if df is None or df.empty:
+            return None
+        return stress_level(df.loc[df["end_ts"] <= before, "response"], value)
 
-def describe(lab: str, row: pd.Series) -> dict:
+    def text(self, value, unit: str, before: pd.Timestamp) -> str:
+        if unit == "z":
+            lvl = self.stress_level(value, before)
+            return fmt(lvl, "level") if lvl is not None else "learning your baseline"
+        return fmt(_num(value), unit)
+
+
+def describe(lab: str, row: pd.Series, ctx: ToolContext | None = None) -> dict:
+    unit = LABS[lab].response_unit
+    say = (lambda v: ctx.text(v, unit, row["ts"])) if ctx is not None else (lambda v: fmt(_num(v), unit))
     base = {"sid": row["sid"], "lab": lab, "start": str(row["ts"]), "weekday": row["ts"].day_name(),
             "response": _num(row["response"]), "expected": _num(row.get("expected")), "z": _num(row.get("z")),
-            "response_label": LABS[lab].response_label, "unit": LABS[lab].response_unit,
-            "response_text": fmt(_num(row["response"]), LABS[lab].response_unit),
-            "usual_text": fmt(_num(row.get("expected")), LABS[lab].response_unit)}
+            "response_label": LABS[lab].response_label, "unit": unit,
+            "response_text": say(row["response"]), "usual_text": say(row.get("expected"))}
     if lab == "fuel":
         base.update(items=row["items"], carbs=_num(row["carbs"]), slot=row["slot"])
     if lab == "movement":
@@ -96,7 +111,7 @@ def find_similar_situations(ctx: ToolContext, situation_id: str, limit: int = 5)
     good = []
     for _, r in hist.iterrows():
         if checks.passed(checks.check_situation(ctx.sig, lab, r, ctx.meals)):
-            good.append(describe(lab, r) | {"similarity": _num(r["score"])})
+            good.append(describe(lab, r, ctx) | {"similarity": _num(r["score"])})
         if len(good) >= limit:
             break
     return {"situation": situation_id, "similar": good}
@@ -122,7 +137,9 @@ def personal_normal(ctx: ToolContext, lab: str, column: str, before: pd.Timestam
 
 def get_personal_normal(ctx: ToolContext, lab: str, signal: str) -> dict:
     med, scale = personal_normal(ctx, lab, signal, ctx.now)
-    return {"lab": lab, "signal": signal, "median": _num(med), "typical_spread": _num(scale)}
+    unit = LABS[lab].response_unit if signal == "response" else cause(lab, signal).unit
+    return {"lab": lab, "signal": signal, "median": _num(med), "typical_spread": _num(scale),
+            "median_text": ctx.text(med, unit, ctx.now)}
 
 
 def compare_situations(ctx: ToolContext, situation_id: str, similar_ids: list[str]) -> dict:
@@ -153,10 +170,11 @@ def compare_situations(ctx: ToolContext, situation_id: str, similar_ids: list[st
         level = "very unusual" if abs(dz) >= cfg.very_unusual_z else "somewhat" if abs(dz) >= cfg.somewhat_z else "normal"
         diffs.append({"factor": c.key, "label": c.label, "unit": c.unit, "this_time": _num(ev[c.key]),
                       "comparison": _num(typical[c.key]), "similar_median": _num(np.median(group)),
-                      "this_time_text": fmt(_num(ev[c.key]), c.unit), "typical_text": fmt(_num(np.median(group)), c.unit),
+                      "this_time_text": ctx.text(ev[c.key], c.unit, ev["ts"]),
+                      "typical_text": ctx.text(float(np.median(group)), c.unit, ev["ts"]),
                       "difference_z": _num(dz), "level": level, "meal_related": c.meal_related})
     diffs.sort(key=lambda d: -abs(d["difference_z"] or 0))
-    return {"situation": describe(lab, ev), "comparison": describe(lab, typical), "n_similar": int(len(sims)),
+    return {"situation": describe(lab, ev, ctx), "comparison": describe(lab, typical, ctx), "n_similar": int(len(sims)),
             "response_direction": "higher" if (ev["z"] or 0) > 0 else "lower", "differences": diffs}
 
 

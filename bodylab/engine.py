@@ -33,7 +33,10 @@ def effect_text(d: dict) -> str:
         return f"{abs(a):.0f} bpm {'higher' if a > 0 else 'lower'} walk heart rate"
     if lab == "sleep":
         return f"sleep starts {abs(a):.0f} min {'later' if a > 0 else 'earlier'}"
-    return f"{'higher' if a > 0 else 'lower'} stress signal ({a:+.1f})"
+    pts = d.get("effect_levels")
+    if pts is not None and np.isfinite(pts) and pts != 0:
+        return f"stress {abs(int(pts))} point{'s' if abs(pts) != 1 else ''} {'higher' if pts > 0 else 'lower'} on your 1–10 scale"
+    return f"{'higher' if a > 0 else 'lower'} stress level"
 
 
 class Engine:
@@ -119,6 +122,10 @@ class Engine:
         if new == "confirmed" and not any(d["hyp_id"] == h["hyp_id"] for d in nb.discoveries):
             floor = FLOORS.get(cause(lab, h["factor"]).unit, 1.0)
             d = nb.make_discovery(h, self.features[lab], ts, floor)
+            if lab == "stress" and np.isfinite(d.get("base_response", np.nan)) and np.isfinite(d["effect_abs"]):
+                lo = ctx.stress_level(d["base_response"], ts)
+                hi = ctx.stress_level(d["base_response"] + d["effect_abs"], ts)
+                d["effect_levels"] = float(hi - lo) if lo is not None and hi is not None else np.nan
             eff = effect_text(d)
             c = cause(lab, h["factor"])
             phrase = c.phrase_high if d["side"] > 0 else c.phrase_low
@@ -137,6 +144,8 @@ class Engine:
             "pid": self.pid, "event_id": f"E{len(nb.events) + 1:03d}", "sid": row["sid"], "lab": lab, "ts": row["ts"],
             "end_ts": row["end_ts"], "response": float(row["response"]), "expected": float(row["expected"]), "z": float(row["z"]),
             "verdict": "investigating", "hyp_id": None, "title": "", "message": "", "agent": "", "factor": None, "comparison_sid": None,
+            "level": ctx.stress_level(row["response"], row["ts"]) if lab == "stress" else None,
+            "usual_level": ctx.stress_level(row["expected"], row["ts"]) if lab == "stress" else None,
         }
         nb.events.append(event)
         result = self.investigator.investigate(ctx, event)

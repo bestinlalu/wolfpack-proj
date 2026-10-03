@@ -11,7 +11,6 @@ import pandas as pd
 
 from bodylab.agent import tools as T
 from bodylab.config import SETTINGS, gemini_api_key
-from bodylab.formatting import fmt as _fmt
 from bodylab.labs import LABS, cause
 
 log = logging.getLogger(__name__)
@@ -29,7 +28,8 @@ The close_case title is a headline under 14 words that leads with the why, like
 "Thursday's lunch spiked higher with fewer steps before eating".
 The close_case message is 1-2 short, plain sentences: quote values only from the *_text fields (response_text, usual_text,
 this_time_text, typical_text), never z-scores, difference_z or raw flags, and end with the open_hypothesis result's
-more_tests_needed (for example "2 more tests needed to confirm"; if 0, say it fits a confirmed discovery)."""
+more_tests_needed (for example "2 more tests needed to confirm"; if 0, say it fits a confirmed discovery).
+Stress values in the *_text fields are on the person's own 1-10 scale (for example "4/10"); keep that form."""
 
 THING = {"fuel": None, "movement": "walk", "sleep": "night", "stress": None}
 
@@ -71,9 +71,18 @@ def lead_message(lab: str, comp: dict, top: dict, hyp: dict) -> tuple[str, str]:
     else:
         need = max(SETTINGS.hypothesis.confirm_supports - supports, 0)
         progress = f"Seen {supports} times: {need} more test{'s' if need != 1 else ''} needed to confirm." if need else f"Seen {supports} times."
-    body = (f"{LABS[lab].response_label.capitalize()}: {_fmt(s['response'], unit)} vs your usual {_fmt(s['expected'], unit)}. "
-            f"Biggest difference: {top['label'].lower()}, {_fmt(top['this_time'], top['unit'])} vs a typical "
-            f"{_fmt(top['similar_median'], top['unit'])} in similar {_plural(_thing(lab, s))}. {progress}")
+    label = "Stress level" if lab == "stress" else LABS[lab].response_label.capitalize()
+    if s["response_text"] == s["usual_text"]:  # same step at the ends of the 1-10 scale
+        response = f"{s['response_text']}, {'above' if higher else 'below'} your usual even for this time of day"
+    else:
+        response = f"{s['response_text']} vs your usual {s['usual_text']}"
+    if top["unit"] == "z" and top["this_time_text"] == top["typical_text"]:
+        up = (top["this_time"] or 0) > (top["similar_median"] or 0)
+        diff = f"{top['this_time_text']}, {'higher' if up else 'lower'} than usual even within that step"
+    else:
+        diff = f"{top['this_time_text']} vs a typical {top['typical_text']}"
+    body = (f"{label}: {response}. Biggest difference: {top['label'].lower()}, {diff} "
+            f"in similar {_plural(_thing(lab, s))}. {progress}")
     return title, body
 
 
@@ -194,7 +203,7 @@ class GeminiInvestigator:
 
     def _run(self, ctx: T.ToolContext, event: dict) -> dict:
         types = self.types
-        brief = {"situation_id": event["sid"], "lab": event["lab"], "situation": T.describe(event["lab"], ctx.situation(event["sid"])[1])}
+        brief = {"situation_id": event["sid"], "lab": event["lab"], "situation": T.describe(event["lab"], ctx.situation(event["sid"])[1], ctx)}
         contents = [types.Content(role="user", parts=[types.Part.from_text(text="Investigate this surprise:\n" + json.dumps(brief, default=str))])]
         trace, comparison, factor = [], None, None
         for _ in range(self.max_turns):

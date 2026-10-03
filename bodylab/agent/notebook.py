@@ -201,7 +201,7 @@ class Notebook:
                     if len(same) >= 3:
                         rows = same
                     break
-        effect_abs, effect_pct = np.nan, np.nan
+        effect_abs, effect_pct, base = np.nan, np.nan, np.nan
         side = h.get("side", 1) or 1
         if len(rows) >= 3:
             f = rows[h["factor"]]
@@ -231,7 +231,7 @@ class Notebook:
         d = {
             "pid": self.pid, "card_id": f"D{len(self.discoveries) + 1}", "hyp_id": h["hyp_id"], "lab": lab,
             "title": TITLES.get(key, f"The {cause(lab, h['factor']).label} Effect"), "claim": h["claim"],
-            "effect_abs": effect_abs, "effect_pct": effect_pct, "unit": LABS[lab].response_unit,
+            "effect_abs": effect_abs, "effect_pct": effect_pct, "base_response": base, "unit": LABS[lab].response_unit,
             "evidence": f"{h['supports']} of {h['supports'] + h['contradicts']} tests", "rarity": rarity,
             "confirmed_at": ts, "status": "confirmed", "n_tested": len(tested), "side": side, "factor": h["factor"],
         }

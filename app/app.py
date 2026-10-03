@@ -21,6 +21,7 @@ from bodylab.engine import Engine  # noqa: E402
 from bodylab.labs import LABS  # noqa: E402
 from bodylab.pipeline.features import Signals  # noqa: E402
 from bodylab.store import open_store  # noqa: E402
+from bodylab.stress_scale import EXPLAINER, band  # noqa: E402
 
 st.set_page_config(page_title="Body Lab", page_icon="🧪", layout="wide")
 
@@ -61,6 +62,32 @@ def card(body: str, cls: str = "") -> None:
 
 def pill(text: str, cls: str) -> str:
     return f'<span class="pill {cls}">{escape(text)}</span>'
+
+
+def _level(v) -> int | None:
+    try:
+        return None if v is None or pd.isna(v) else int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def stress_scale_html(level, usual) -> str:
+    """Ten cells, 1 (calmest for you) to 10; typical band shaded, this window filled, your usual outlined."""
+    level, usual = _level(level), _level(usual)
+    head = '<div class="bl-label">Stress level · your personal 1–10</div>'
+    if level is None:
+        return head + '<div class="bl-sub">Learning your baseline: the scale needs about 2 days of data.</div>'
+    cells = ""
+    for i in range(1, 11):
+        bg = "var(--glu)" if i == level else "var(--sunk)" if 4 <= i <= 7 else "#fff"
+        border = "2px solid var(--ink)" if i == usual else "1px solid var(--line)"
+        color = "#fff" if i == level else "var(--ink2)"
+        cells += (f'<div style="flex:1;height:30px;border-radius:6px;background:{bg};border:{border};color:{color};'
+                  f'display:flex;align-items:center;justify-content:center;font:500 12px \'IBM Plex Mono\',monospace">{i}</div>')
+    usual_txt = f" · your usual here: <b>{usual}/10</b> (outlined)" if usual is not None else ""
+    return (head + f'<div style="display:flex;gap:4px;margin:6px 0">{cells}</div>'
+            f'<div class="bl-sub bl-num" style="display:flex;justify-content:space-between"><span>calmer</span><span>typical</span><span>more stressed</span></div>'
+            f'<div style="margin-top:8px">This window: <b>{level}/10</b>, {escape(band(level))}{usual_txt}</div>')
 
 
 # ---------------------------------------------------------------- state
@@ -202,7 +229,9 @@ with tab_today:
             cards = sum(d["lab"] == lab.key and d["status"] != "rejected" for d in nb.discoveries)
             open_h = sum(h["lab"] == lab.key and h["status"] == "testing" for h in nb.hypotheses)
             with cols[i % 2]:
-                card(f'<div class="bl-title">{lab.name}</div><div class="bl-sub">{lab.situation}s</div>{pill(f"{cards} cards", "p-acc")}{pill(f"{open_h} open", "p-plain")}')
+                extra = (f'<div class="bl-sub" title="{escape(EXPLAINER)}" style="cursor:help">stress 1–10, personal ⓘ</div>'
+                         if lab.key == "stress" else "")
+                card(f'<div class="bl-title">{lab.name}</div><div class="bl-sub">{lab.situation}s</div>{extra}{pill(f"{cards} cards", "p-acc")}{pill(f"{open_h} open", "p-plain")}')
         if st.button("▶ Weekly recap", use_container_width=True):
             text = voice.recap_text(nb, now)
             text = voice.polish(text)
@@ -281,7 +310,7 @@ with tab_case:
                 x, y = trace(this[1], lab)
                 fig.add_trace(go.Scatter(x=x, y=y, name=f"This: {this[1]['ts']:%a %b %d}", line=dict(color=GLU, width=3)))
             xlab = {"fuel": "minutes after eating", "movement": "minutes from walk start", "sleep": "hours after 20:00", "stress": "minutes into the window"}[lab]
-            ylab = {"fuel": "glucose (mg/dL)", "movement": "heart rate (bpm)", "sleep": "heart rate (bpm)", "stress": "stress signal"}[lab]
+            ylab = {"fuel": "glucose (mg/dL)", "movement": "heart rate (bpm)", "sleep": "heart rate (bpm)", "stress": "stress signal (0 = your usual)"}[lab]
             fig.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), xaxis_title=xlab, yaxis_title=ylab,
                               legend=dict(orientation="h", y=1.12), plot_bgcolor="white", font=dict(family="IBM Plex Sans"))
             fig.update_xaxes(gridcolor="#eef1f0")
@@ -291,6 +320,8 @@ with tab_case:
             if tools:
                 st.caption("Agent steps: " + " → ".join(tools))
         with c2:
+            if lab == "stress":
+                card(stress_scale_html(ev.get("level"), ev.get("usual_level")))
             checks = json.loads(ev.get("checks_json") or "[]")
             if checks:
                 rows = "".join(f'<div class="{"check" if c["passed"] else "fail"}">{escape(c["check"])}: <span class="bl-sub">{escape(c["detail"])}</span></div>' for c in checks)
@@ -304,8 +335,11 @@ with tab_case:
                     color = {"very unusual": "var(--glu)", "somewhat": "var(--warn)", "normal": "var(--ink3)"}[lvl]
                     html += (f'<div style="margin:8px 0"><b>{escape(d["label"])}</b> {pill(lvl, {"very unusual": "p-glu", "somewhat": "p-warn", "normal": "p-plain"}[lvl])}'
                              f'<div class="bar"><i style="width:{min(z / 4, 1) * 100:.0f}%;background:{color}"></i></div>'
-                             f'<div class="bl-sub bl-num">this time {escape(_fmt(d["this_time"], d["unit"]))} · typical {escape(_fmt(d["similar_median"], d["unit"]))}</div></div>')
+                             f'<div class="bl-sub bl-num">this time {escape(d.get("this_time_text") or _fmt(d["this_time"], d["unit"]))} · '
+                             f'typical {escape(d.get("typical_text") or _fmt(d["similar_median"], d["unit"]))}</div></div>')
                 card(html)
+            if lab == "stress" or any(d["unit"] == "z" for d in diffs[:5]):
+                st.caption(EXPLAINER)
             h = next((x for x in nb.hypotheses if x["hyp_id"] == ev.get("hyp_id")), None)
             if h:
                 card(f'<div class="bl-label">Step 3 · Verdict</div><div class="bl-title">{escape(h["hyp_id"])}: {escape(h["claim"])}</div>'
