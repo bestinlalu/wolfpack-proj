@@ -14,6 +14,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bodylab import meal_photo, voice  # noqa: E402
+from bodylab import patterns  # noqa: E402
 from bodylab.agent.investigator import make_investigator  # noqa: E402
 from bodylab.formatting import fmt as _fmt  # noqa: E402
 from bodylab.config import elevenlabs_api_key, gemini_api_key  # noqa: E402
@@ -49,6 +50,10 @@ h1, h2, h3 { font-family: 'Bricolage Grotesque', system-ui, sans-serif !importan
 .bar { height: 6px; background: var(--sunk); border-radius: 3px; overflow: hidden; margin-top: 6px; } .bar i { display: block; height: 100%; border-radius: 3px; }
 .dots i { display: inline-block; width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid var(--line); margin-right: 4px; vertical-align: middle; }
 .dots i.s { background: var(--ok); border-color: var(--ok); } .dots i.c { background: var(--glu); border-color: var(--glu); }
+.pattern-evidence { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:10px; }
+.pattern-evidence .dots { display:flex; flex-wrap:wrap; gap:4px; }
+.pattern-evidence .dots i { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; margin:0; color:#fff; font:700 11px sans-serif; font-style:normal; }
+.pattern-evidence .dots i.c { border-radius:3px; }
 .check::before { content: "✓"; color: var(--ok); font-weight: 700; margin-right: 8px; } .fail::before { content: "✕"; color: var(--glu); font-weight: 700; margin-right: 8px; }
 </style>
 """, unsafe_allow_html=True)
@@ -63,6 +68,32 @@ def card(body: str, cls: str = "") -> None:
 
 def pill(text: str, cls: str) -> str:
     return f'<span class="pill {cls}">{escape(text)}</span>'
+
+
+def pattern_body(h: dict, *, show_name: bool = False) -> str:
+    status_cls = {"testing": "p-plain", "confirmed": "p-ok", "fading": "p-warn", "rejected": "p-glu"}
+    badges = pill(LABS[h["lab"]].name, LAB_PILL[h["lab"]]) + pill(patterns.STATUS[h["status"]], status_cls.get(h["status"], "p-plain"))
+    if h["status"] in ("testing", "confirmed", "fading"):
+        badges += pill("Tracking automatically", "p-acc")
+    title = patterns.name(h) if show_name else patterns.question(h)
+    body = badges + f'<div class="bl-title">{escape(title)}</div>'
+    if show_name:
+        body += f'<div class="bl-sub">{escape(patterns.question(h))}</div>'
+    reason = patterns.origin(h, nb.events)
+    if reason and not show_name:
+        body += f'<div class="bl-sub">{escape(reason)}</div>'
+    evidence = [e for e in nb.evidence if e["hyp_id"] == h["hyp_id"] and e["verdict"] in ("supports", "contradicts")]
+    dots = ""
+    for e in evidence:
+        matched = e["verdict"] == "supports"
+        label = "Matched" if matched else "Didn’t match"
+        ts = e.get("ts")
+        if ts is not None and pd.notna(ts):
+            label += f" · {pd.Timestamp(ts):%a %b %d}"
+        dots += f'<i class="{"s" if matched else "c"}" title="{escape(label)}" aria-label="{escape(label)}">{"✓" if matched else "×"}</i>'
+    body += (f'<div class="pattern-evidence"><span class="dots">{dots}</span>'
+             f'<span class="bl-sub">{h["supports"]} matched</span></div>')
+    return body
 
 
 def _level(v) -> int | None:
@@ -381,8 +412,7 @@ with tab_case:
                 st.caption(EXPLAINER)
             h = next((x for x in nb.hypotheses if x["hyp_id"] == ev.get("hyp_id")), None)
             if h:
-                card(f'<div class="bl-label">Step 3 · Verdict</div><div class="bl-title">{escape(h["hyp_id"])}: {escape(h["claim"])}</div>'
-                     f'<div class="bl-sub">Status: {escape(h["status"])} · {h["supports"]} supporting, {h["contradicts"]} against</div>', "acc")
+                card('<div class="bl-label">Step 3 · Possible pattern</div>' + pattern_body(h), "acc")
 
 # ---------------------------------------------------------------- Discoveries
 with tab_disc:
@@ -404,8 +434,7 @@ with tab_disc:
     close = [h for h in nb.hypotheses if h["status"] == "testing" and h["supports"] >= 2]
     for j, h in enumerate(close):
         with cols[(len(items) + j) % 3]:
-            card(f'<div class="bl-title" style="font-size:22px">?</div><div>{LABS[h["lab"]].name} Lab</div>'
-                 f'<div class="bl-sub">{escape(h["hyp_id"])} is {max(3 - h["supports"], 1)} test away</div>', "locked")
+            card(pattern_body(h, show_name=True), "locked")
     rejected = [d for d in nb.discoveries if d["status"] == "rejected"]
     if rejected:
         st.caption("Withdrawn after newer data disagreed: " + ", ".join(d["title"] for d in rejected))
@@ -416,17 +445,10 @@ with tab_nb:
     c1, c2 = st.columns([3, 2], gap="large")
     with c1:
         order = {"testing": 0, "fading": 1, "confirmed": 2, "inconclusive": 3, "expired": 4, "rejected": 5}
-        status_pill = {"testing": "p-plain", "confirmed": "p-ok", "fading": "p-warn", "rejected": "p-glu", "inconclusive": "p-plain", "expired": "p-plain"}
         testing = [h for h in nb.hypotheses if h["status"] == "testing"]
-        meal_open = sum(h["meal_related"] for h in testing)
-        st.markdown(f'<div class="bl-label">Hypotheses · {len(testing)} of 10 open slots · meal-related {meal_open} of 2 max</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="bl-label">Possible patterns · {len(testing)} still checking</div>', unsafe_allow_html=True)
         for h in sorted(nb.hypotheses, key=lambda h: (order[h["status"]], h["hyp_id"])):
-            ev_rows = [e for e in nb.evidence if e["hyp_id"] == h["hyp_id"] and e["verdict"] != "neutral"]
-            dots = "".join(f'<i class="{"s" if e["verdict"] == "supports" else "c"}"></i>' for e in ev_rows[-10:])
-            dots += "".join("<i></i>" for _ in range(max(0, 3 - h["supports"]))) if h["status"] == "testing" else ""
-            card(f'{pill(h["hyp_id"], "p-acc")}{pill(LABS[h["lab"]].name, LAB_PILL[h["lab"]])}{pill(h["status"], status_pill[h["status"]])}'
-                 f'<div class="bl-title">{escape(h["claim"])}</div><div class="dots">{dots}</div>'
-                 f'<div class="bl-sub">{h["supports"]} supporting · {h["contradicts"]} against · {h["chances"]} chances</div>')
+            card(pattern_body(h))
     with c2:
         f = nb.funnel()
         top = max(f["surprises"], 1)
