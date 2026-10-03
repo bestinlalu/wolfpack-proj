@@ -19,7 +19,26 @@ import os
 import sys
 import time
 
-sys.path.append(os.path.abspath(".."))
+def _repo_root() -> str:
+    """Find the folder that contains bodylab/, starting from this notebook's location."""
+    starts = [os.getcwd()]
+    try:
+        nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
+        starts.append(os.path.dirname("/Workspace" + nb_path))
+    except Exception:
+        pass
+    for start in starts:
+        p = os.path.abspath(start)
+        while p != os.path.dirname(p):
+            if os.path.isfile(os.path.join(p, "bodylab", "__init__.py")):
+                return p
+            p = os.path.dirname(p)
+    raise ModuleNotFoundError(
+        "Couldn't find the bodylab folder. Add the whole GitHub repo as a Git folder "
+        "(Workspace > Create > Git folder) and open this notebook from its notebooks/ folder.")
+
+
+sys.path.insert(0, _repo_root())
 
 import pandas as pd
 
