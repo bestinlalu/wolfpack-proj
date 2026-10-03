@@ -1,0 +1,9 @@
+pandas>=2.1
+numpy>=1.26
+pyarrow>=14
+streamlit>=1.36
+plotly>=5.20
+requests>=2.31
+google-genai>=1.30
+databricks-sql-connector>=3.0
+databricks-sdk>=0.30

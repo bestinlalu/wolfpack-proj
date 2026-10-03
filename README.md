@@ -7,7 +7,23 @@
 Built at **WolfHacks (ACM at NC State)** for the **Applied AI Software (Databricks)** track.
 
 - **Mockup:** [Body Lab mockup](https://claude.ai/artifact/7PqmPr3Fmg89AdvNkDaDiV)
-- **Status:** hackathon prototype. Not a medical device and not medical advice.
+- **Status:** working hackathon prototype: data pipeline, investigating agent, Databricks notebooks and web app. Not a medical device and not medical advice.
+
+**Quick start (local, no API keys needed):**
+
+```bash
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+```
+
+```bash
+.venv/bin/python scripts/prepare.py --synthetic
+```
+
+```bash
+.venv/bin/streamlit run app/app.py
+```
+
+Then press **Play to end** in the sidebar. See [Getting started](#getting-started) for real data, Gemini, ElevenLabs and Databricks.
 
 ---
 
@@ -95,7 +111,7 @@ All four labs run on the same person's wristband data. Glucose and meals are cor
 | Lab | Compares | Example surprise | Example discovery |
 | --- | --- | --- | --- |
 | Fuel | Meal vs similar meal (similar carbs and time of day) | Same pasta: +25 vs +70 | Walking before lunch shrinks your spike |
-| Stress | Hour vs the same hour on similar days | Tuesday 3pm far above your usual 3pm | Your stress signal peaks on weekday afternoons |
+| Stress | 2-hour window vs the same window on earlier days | Tuesday 14:00–16:00 far above your usual | Your stress signal peaks on weekday afternoons |
 | Sleep (estimated) | Night vs other nights | Fell asleep 1 hour later than usual | Evening walks bring your sleep earlier |
 | Movement and Rhythm | Walk vs similar walk; day vs similar day | Same 30-minute walk, heart rate 15 bpm higher | After short nights, your walks run 12 bpm higher |
 
@@ -234,15 +250,19 @@ The agent's memory lives in Delta tables (its **lab notebook**), not in the lang
 
 ### Tools
 
+Tools Gemini can call (in [`bodylab/agent/tools.py`](bodylab/agent/tools.py)):
+
 | Tool | Input | Returns |
 | --- | --- | --- |
-| `check_data_quality` | event id | Sensor gaps, warm-up period, missing or suspect meal logs |
-| `find_similar_situations` | event id, lab | Past events with similar carbs, time slot or activity |
-| `compare_situations` | event id, list of similar ids | Each signal's difference, scored against personal variation |
-| `get_personal_normal` | user, signal, context | Typical range (median and spread) for that person |
-| `open_hypothesis` | claim, factor, lab | New row in `hypotheses` |
-| `record_evidence` | hypothesis id, event id, supports or contradicts | Updated counts and status |
-| `propose_quest` | discovery id | One optional quest the sensors can detect |
+| `check_data_quality` | situation id | Pass/fail for each data check, with details |
+| `find_similar_situations` | situation id | Earlier situations in the same lab with similar context (same meal slot and carbs, similar walk pace, same stress window on earlier days); bad-data ones excluded |
+| `compare_situations` | situation id, similar ids | Each candidate cause's difference against similar situations that went the other way, scored against personal spread |
+| `get_personal_normal` | lab, signal | Typical value (median and spread) for that person |
+| `list_hypotheses` | lab | Open and confirmed hypotheses, so the agent adds support instead of duplicating |
+| `open_hypothesis` | situation id, factor, direction | New hypothesis, support for an existing one, or evidence against an opposite one |
+| `close_case` | verdict, title, message | Ends the investigation (bad_data, unexplained or lead) |
+
+Evidence recording, lifecycle rules, discovery cards and quests are run by the engine ([`bodylab/engine.py`](bodylab/engine.py)) on every new situation, not by the language model, so they are deterministic and cheap. Without a Gemini key, a rule-based investigator calls the same tools in a fixed order; with a key, any Gemini error falls back to it.
 
 ### Lab notebook tables
 
@@ -338,7 +358,7 @@ No competitive leaderboard: ranking people on health can backfire.
 | Streaming | Replayer notebook + Auto Loader (Structured Streaming) | Replays a week in a few minutes |
 | Features | Spark SQL and pandas | Per-minute signals, meal, night and walk features, personal normals |
 | Agent | Gemini API function calling + Python tools | Investigation loop, explanations, weekly summary, meal photo parsing |
-| Tracing (optional) | MLflow tracing | Logs each agent run so tool calls can be inspected |
+| Tests | pytest | Loader quirks, lifecycle rules, planted-effect recovery, Gemini loop with a scripted client |
 | Web app | Databricks App (Streamlit + Plotly) | Today, Case, Discoveries, Notebook |
 | Voice | ElevenLabs text-to-speech | 30-second weekly recap |
 | Domain | GoDaddy Registry | Public URL |
@@ -350,49 +370,102 @@ Not used: Solana (health data on a public chain is a privacy problem) and Tiger 
 
 ## Repository structure
 
-Proposed layout:
-
 ```text
-body-lab/
+wolfpack-proj/
 ├── README.md
-├── data/
-│   └── README.md              # how to download the dataset (data itself not committed)
-├── notebooks/
-│   ├── 01_load_raw.py         # CSVs -> Volume -> raw Delta tables
-│   ├── 02_downsample.py       # wristband signals -> per-minute
-│   ├── 03_replayer.py         # writes timed chunks into the stream folder
-│   ├── 04_stream_ingest.py    # Auto Loader -> live Delta tables
-│   ├── 05_features.py         # meal, night, walk, hourly stress features + personal normals
-│   └── 06_run_agent.py        # surprise detector + agent loop over new events
-├── agent/
-│   ├── tools.py               # the seven tools over Delta tables
-│   ├── rules.py               # data checks, hypothesis lifecycle, rarity
-│   ├── prompts.py             # system prompt and message templates
-│   └── loop.py                # Gemini function-calling loop
+├── app.yaml                     # Databricks App config (deploy from the repo root)
+├── requirements.txt / requirements-dev.txt
+├── .streamlit/config.toml       # light lab-notebook theme
 ├── app/
-│   ├── app.py                 # Streamlit entry point
-│   ├── app.yaml               # Databricks App config
-│   ├── pages/                 # Today, Case, Discoveries, Notebook
-│   └── voice.py               # ElevenLabs recap
-└── tests/
-    └── test_planted.py        # planted-change validation
+│   └── app.py                   # Streamlit web app: Today, Case, Discoveries, Notebook, replay controls
+├── bodylab/
+│   ├── config.py                # every threshold in one place
+│   ├── labs.py                  # what each lab compares, measures and may blame
+│   ├── data/loader.py           # raw BIG IDEAs files -> per-minute signals and grouped meals
+│   ├── data/synthetic.py        # synthetic participant with planted effects and planted data problems
+│   ├── pipeline/features.py     # meals, 2-hour stress windows, nights, walks + personal expectations
+│   ├── agent/checks.py          # data checks
+│   ├── agent/tools.py           # tools the agent calls
+│   ├── agent/investigator.py    # Gemini tool-calling loop + rule-based fallback
+│   ├── agent/notebook.py        # lab notebook, hypothesis lifecycle, cards, quests, rank
+│   ├── engine.py                # processes new situations: tests, lifecycle, investigations
+│   ├── store.py                 # local parquet store; read-only Databricks SQL store for the app
+│   ├── databricks_io.py         # Delta read/write per participant
+│   ├── voice.py                 # weekly recap text + ElevenLabs speech
+│   └── meal_photo.py            # Gemini meal photo -> JSON meal log
+├── notebooks/                   # Databricks notebooks (source format)
+│   ├── 00_setup.py              # schema + Volumes
+│   ├── 01_prepare_minute.py     # Spark: raw CSVs -> minute_signals, meals
+│   ├── 02_replayer.py           # writes timed chunks into the stream Volume
+│   ├── 03_stream_ingest.py      # Auto Loader -> live_minute, live_meals
+│   ├── 04_run_agent.py          # agent loop over streamed data -> features_* and nb_* tables
+│   └── 05_batch_all.py          # whole dataset in one go (fallback, cross-participant check)
+├── scripts/
+│   ├── download_data.sh         # selected participants from PhysioNet (skips BVP and IBI)
+│   ├── prepare.py               # raw or synthetic -> local lakehouse
+│   └── replay.py                # headless replay with a printed summary
+└── tests/                       # pytest suite
 ```
 
 ---
 
 ## Getting started
 
-### Prerequisites
+### Local (no Databricks)
 
-- A Databricks Free Edition workspace with serverless notebooks and Databricks Apps
-- A Gemini API key from Google AI Studio
-- An ElevenLabs API key
-- The BIG IDEAs dataset downloaded from PhysioNet
+1. **Install** (Python 3.11 or newer):
 
-### Setup
+   ```bash
+   python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+   ```
 
-1. **Upload the data.** Create a Unity Catalog Volume (for example `/Volumes/main/body_lab/raw`) and upload the participant folders.
-2. **Store secrets.** Add the API keys as Databricks secrets:
+2. **Get data.** Either the synthetic demo participant `S01`, which has planted effects so you can see what the agent should find:
+
+   ```bash
+   .venv/bin/python scripts/prepare.py --synthetic
+   ```
+
+   or real participants. Each one is about 1 GB to download (mostly the accelerometer file), and preparing it takes a few minutes:
+
+   ```bash
+   scripts/download_data.sh 001
+   ```
+
+   ```bash
+   .venv/bin/python scripts/prepare.py --pid 001
+   ```
+
+   If wristband and glucose times look shifted, set `BODYLAB_WRIST_OFFSET_HOURS` (or `--wrist-offset-hours`) and prepare again.
+
+3. **Optional keys** (export before starting the app):
+
+   ```bash
+   export GEMINI_API_KEY=your-key ELEVENLABS_API_KEY=your-key
+   ```
+
+4. **Run the app** and use the sidebar to replay (+6 hours, +1 day, Play to end):
+
+   ```bash
+   .venv/bin/streamlit run app/app.py
+   ```
+
+   Or replay without the app and print what the agent found:
+
+   ```bash
+   .venv/bin/python scripts/replay.py --pid S01
+   ```
+
+5. **Tests:**
+
+   ```bash
+   .venv/bin/python -m pytest -q
+   ```
+
+### Databricks Free Edition
+
+1. Add this repository as a **Git folder** in the workspace, so the notebooks can import `bodylab`.
+2. Run `notebooks/00_setup` (creates `workspace.body_lab` and its Volumes), then upload raw files to `/Volumes/workspace/body_lab/raw/<pid>/`.
+3. Store secrets:
 
    ```bash
    databricks secrets create-scope body-lab
@@ -406,11 +479,11 @@ body-lab/
    databricks secrets put-secret body-lab elevenlabs_api_key
    ```
 
-3. **Build the tables.** Run notebooks `01` to `02` once.
-4. **Start the replay.** Run `04_stream_ingest.py`, then `03_replayer.py`. Run `05_features.py` and `06_run_agent.py` on a short loop.
-5. **Deploy the app.** Create a Databricks App from the `app/` folder (UI or CLI), give it access to the `body_lab` schema and the secret scope, then open its URL.
+4. Run `01_prepare_minute` with `pids` set to `001` (or `synthetic` for the demo participant).
+5. For the live demo, run these three at the same time: `03_stream_ingest`, `04_run_agent`, then `02_replayer`. As a fallback, `05_batch_all` processes everything without streaming.
+6. Create a **Databricks App** from the repository root (it uses `app.yaml`). Add resources for a SQL warehouse (`sql-warehouse`) and the two secrets (`gemini-api-key`, `elevenlabs-api-key`), and give the app's service principal read access to the `body_lab` schema. The app then reads the Delta tables in read-only mode.
 
-Paths, schema names and commands above are the planned defaults; adjust them to your workspace.
+The Databricks notebooks and app have been written against the documented APIs but not yet run in a workspace; expect small fixes on first run (catalog names, permissions, serverless limits).
 
 ---
 

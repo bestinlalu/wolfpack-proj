@@ -1,0 +1,15 @@
+# Databricks App: deploy from the repository root so the bodylab package is included.
+command: ["streamlit", "run", "app/app.py", "--server.headless", "true"]
+env:
+  - name: BODYLAB_SOURCE
+    value: databricks
+  - name: BODYLAB_CATALOG
+    value: workspace
+  - name: BODYLAB_SCHEMA
+    value: body_lab
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse
+  - name: GEMINI_API_KEY
+    valueFrom: gemini-api-key
+  - name: ELEVENLABS_API_KEY
+    valueFrom: elevenlabs-api-key
