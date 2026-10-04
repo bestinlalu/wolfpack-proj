@@ -61,9 +61,9 @@ def test_meal_cap_drops_weakest():
 
 def test_rank_progression():
     nb = Notebook("S01")
-    assert nb.rank()[0] == "Intern"
+    assert nb.rank()[0] == "Rookie"
     nb.discoveries = [{"rarity": "rare", "status": "confirmed"}] * 4
-    assert nb.rank()[0] == "Researcher"
+    assert nb.rank()[0] == "Detective"
 
 
 def test_glucose_gap_fails_check():

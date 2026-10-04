@@ -74,7 +74,7 @@ function Today({ pid }) {
 
     {data && <Card><Text style={styles.eyebrow}>CLOSED QUIETLY THIS WEEK</Text><Text style={styles.body}>{data.closed_quietly.unexplained} surprise{data.closed_quietly.unexplained===1?'':'s'} with no clear reason · {data.closed_quietly.bad_data} dismissed as bad data</Text><Text style={styles.muted}>No alerts were sent for these. Details are in the Notebook.</Text></Card>}
 
-    {data && <><SectionTitle>Scientist rank</SectionTitle><Card><View style={styles.rankRow}><Text style={styles.rankName}>{rank.name}</Text><Text style={styles.rankPoints}>{rank.points} points</Text></View><Text style={styles.muted}>{rank.next_rank_points ? `${rank.next_rank_points-rank.points} points to the next rank` : 'Top rank reached'}</Text></Card></>}
+    {data && <><SectionTitle>Detective rank</SectionTitle><Card><View style={styles.rankRow}><Text style={styles.rankName}>{rank.name}</Text><Text style={styles.rankPoints}>{rank.points} points</Text></View><Text style={styles.muted}>{rank.next_rank_points ? `${rank.next_rank_points-rank.points} points to the next rank` : 'Top rank reached'}</Text></Card></>}
 
     {data?.quests?.length ? <><SectionTitle>Quests</SectionTitle>{data.quests.map((q,i)=><Card key={i}><Text style={styles.eyebrow}>OPTIONAL · DETECTED AUTOMATICALLY</Text><Text style={styles.compactTitle}>{q.title}</Text><Text style={styles.body}>{q.done?'Done':`${q.progress} of ${q.target}`}</Text></Card>)}</> : null}
   </ScrollView>;
