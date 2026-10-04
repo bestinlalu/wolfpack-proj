@@ -741,8 +741,13 @@ with tab_today:
                 st.rerun()
 
 # ---------------------------------------------------------------- Case
+def _text(value) -> str:
+    """Optional text fields read back from Delta as NaN (a float) when empty."""
+    return value if isinstance(value, str) else ""
+
+
 def situation_row(sid: str | None) -> tuple[str, pd.Series] | None:
-    if not sid:
+    if not _text(sid):
         return None
     lab = sid.split("-")[1]
     df = eng.features.get(lab, pd.DataFrame())
@@ -829,17 +834,17 @@ with tab_case:
             fig.update_xaxes(gridcolor="#eef1f0")
             fig.update_yaxes(gridcolor="#eef1f0")
             st.plotly_chart(fig, use_container_width=True)
-            tools = json.loads(ev.get("tools_json") or "[]")
+            tools = json.loads(_text(ev.get("tools_json")) or "[]")
             if tools:
                 st.caption("Agent steps: " + " → ".join(tools))
         with c2:
             if lab == "stress":
                 card(stress_scale_html(ev.get("level"), ev.get("usual_level")))
-            checks = json.loads(ev.get("checks_json") or "[]")
+            checks = json.loads(_text(ev.get("checks_json")) or "[]")
             if checks:
                 rows = "".join(f'<div class="{"check" if c["passed"] else "fail"}">{escape(c["check"])}: <span class="bl-sub">{escape(c["detail"])}</span></div>' for c in checks)
                 card(f'<div class="bl-label">Step 1 · Data check</div>{rows}')
-            diffs = json.loads(ev.get("differences_json") or "[]")
+            diffs = json.loads(_text(ev.get("differences_json")) or "[]")
             if diffs:
                 html = '<div class="bl-label">Step 2 · What was different</div>'
                 for d in diffs[:5]:
