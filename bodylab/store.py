@@ -84,10 +84,16 @@ class DatabricksSqlStore:
 
     read_only = True
 
+    PARALLEL_READS = 4  # connections used to fetch one user's ~13 tables at once
+
     def __init__(self):
+        import threading
+
         self.catalog = os.getenv("BODYLAB_CATALOG", "workspace")
         self.schema = os.getenv("BODYLAB_SCHEMA", "body_lab")
-        self.conn = self._connect()
+        self._lock = threading.Lock()
+        self._idle = [self._connect()]  # small pool, so parallel reads each get their own connection
+        self._executor = None
 
     @staticmethod
     def _connect():
@@ -101,23 +107,39 @@ class DatabricksSqlStore:
             credentials_provider=lambda: cfg.authenticate,
         )
 
+    def _execute(self, statement: str, fetch: bool):
+        """Run one statement on a pooled connection; a dropped session (warehouse slept) gets one reconnect."""
+        with self._lock:
+            conn = self._idle.pop() if self._idle else None
+        conn = conn or self._connect()
+        try:
+            for attempt in range(2):
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(statement)
+                        return cur.fetchall_arrow().to_pandas() if fetch else None
+                except Exception as exc:
+                    if attempt or "TABLE_OR_VIEW_NOT_FOUND" in str(exc):  # a missing table is a real answer
+                        raise
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    conn = self._connect()
+        finally:
+            with self._lock:
+                self._idle.append(conn)
+
     def _q(self, table: str, pid: str | None = None) -> pd.DataFrame:
         where = f" WHERE pid = '{pid}'" if pid and pid.isalnum() else ""
-        query = f"SELECT * FROM {self.catalog}.{self.schema}.{table}{where}"
-        for attempt in range(2):
-            try:
-                with self.conn.cursor() as cur:
-                    cur.execute(query)
-                    return cur.fetchall_arrow().to_pandas()
-            except Exception as exc:
-                # A missing table is a real answer; a dropped session (warehouse slept) gets one reconnect.
-                if attempt or "TABLE_OR_VIEW_NOT_FOUND" in str(exc):
-                    raise
-                try:
-                    self.conn.close()
-                except Exception:
-                    pass
-                self.conn = self._connect()
+        return self._execute(f"SELECT * FROM {self.catalog}.{self.schema}.{table}{where}", fetch=True)
+
+    def _parallel(self, fn, items: list) -> list:
+        from concurrent.futures import ThreadPoolExecutor
+
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=self.PARALLEL_READS)
+        return list(self._executor.map(fn, items))
 
     def pids(self) -> list[str]:
         return sorted(self._q("agent_state")["pid"].unique().tolist())
@@ -147,15 +169,7 @@ class DatabricksSqlStore:
                   "ON t.username = s.username WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *")
 
     def _run(self, statement: str) -> None:
-        for attempt in range(2):
-            try:
-                with self.conn.cursor() as cur:
-                    cur.execute(statement)
-                return
-            except Exception:
-                if attempt:
-                    raise
-                self.conn = self._connect()
+        self._execute(statement, fetch=False)
 
     def signature(self) -> str:
         """One small query that changes whenever the agent saves new results for anyone."""
@@ -169,12 +183,15 @@ class DatabricksSqlStore:
         return "|".join(f"{p}@{s}" for p, s in sorted(zip(df["pid"], stamp.astype(str))))
 
     def read_inputs(self, pid: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-        return self._q("live_minute", pid), self._q("live_meals", pid)
+        minute, meals = self._parallel(lambda t: self._q(t, pid), ["live_minute", "live_meals"])
+        return minute, meals
 
     def read_state(self, pid: str):
-        features = {lab: self._safe(f"features_{lab}", pid) for lab in LABS}
-        frames = {name: self._safe(f"nb_{name}", pid) for name in TABLES}
-        state = self._safe("agent_state", pid)
+        tables = [f"features_{lab}" for lab in LABS] + [f"nb_{name}" for name in TABLES] + ["agent_state"]
+        got = dict(zip(tables, self._parallel(lambda t: self._safe(t, pid), tables)))  # ~12 tables, 4 at a time
+        features = {lab: got[f"features_{lab}"] for lab in LABS}
+        frames = {name: got[f"nb_{name}"] for name in TABLES}
+        state = got["agent_state"]
         until = pd.Timestamp(state["until"].iloc[0]) if len(state) else None
         agent = state["agent"].iloc[0] if len(state) else ""
         return features, Notebook.from_frames(pid, frames), until, agent

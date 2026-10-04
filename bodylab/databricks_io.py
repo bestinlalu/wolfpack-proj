@@ -91,29 +91,37 @@ def _fingerprint(frames: dict[str, pd.DataFrame]) -> int:
     return total
 
 
-def save_states(spark, prefix: str, results: list[tuple], written: dict | None = None) -> None:
+def save_states(spark, prefix: str, results: list[tuple], written: dict | None = None, workers: int = 6) -> None:
     """results: (pid, features, notebook, until, agent) for each participant that changed; one write per table.
 
-    Pass the same `written` dict on every call to skip tables whose content hasn't changed since the last write
-    (each Delta write takes seconds, so this is most of the time saved per loop).
+    Pass the same `written` dict on every call to skip tables whose content hasn't changed since the last write.
+    Changed tables are written in parallel (each Delta write takes seconds); agent_state is written last, so the
+    app, which watches agent_state, never reloads a half-written set of results.
     """
     if not results:
         return
     written = {} if written is None else written
     pids = tuple(sorted(pid for pid, *_ in results))
 
-    def write(table: str, frames: dict[str, pd.DataFrame]) -> None:
-        key, fp = (table, pids), _fingerprint(frames)
-        if written.get(key) == fp:
-            return
-        write_pids_table(spark, frames, table)
-        written[key] = fp
-
-    for lab in LABS:
-        write(f"{prefix}.features_{lab}", {pid: feats.get(lab, pd.DataFrame()) for pid, feats, *_ in results})
+    jobs = {f"{prefix}.features_{lab}": {pid: feats.get(lab, pd.DataFrame()) for pid, feats, *_ in results} for lab in LABS}
     frames = {pid: nb.to_frames() for pid, _, nb, *_ in results}
-    for name in TABLES:
-        write(f"{prefix}.nb_{name}", {pid: f[name] for pid, f in frames.items()})
+    jobs.update({f"{prefix}.nb_{name}": {pid: f[name] for pid, f in frames.items()} for name in TABLES})
+    todo = {}
+    for table, table_frames in jobs.items():
+        fp = _fingerprint(table_frames)
+        if written.get((table, pids)) != fp:
+            todo[table] = (table_frames, fp)
+
+    if todo:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(workers, len(todo))) as pool:
+            futures = {pool.submit(write_pids_table, spark, table_frames, table): (table, fp)
+                       for table, (table_frames, fp) in todo.items()}
+            for future, (table, fp) in futures.items():
+                future.result()  # re-raise any write error
+                written[(table, pids)] = fp
+
     now = pd.Timestamp.utcnow().tz_localize(None)
     state = {pid: pd.DataFrame([{"pid": pid, "until": pd.Timestamp(until), "agent": agent, "updated_at": now}])
              for pid, _, _, until, agent in results}

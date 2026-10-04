@@ -92,15 +92,7 @@ class Warehouse:
         return naive(self.store._q(table, pid))
 
     def run(self, sql: str) -> None:
-        for attempt in range(2):
-            try:
-                with self.store.conn.cursor() as cur:
-                    cur.execute(sql)
-                return
-            except Exception:
-                if attempt:
-                    raise
-                self.store.conn = self.store._connect()  # warehouse may have dropped the session
+        self.store._run(sql)  # pooled connection, reconnects once if the warehouse dropped the session
 
     def exists(self, table: str) -> bool:
         try:
@@ -178,11 +170,14 @@ def main() -> None:
             minute_parts.append(minute[(minute["ts"] >= lo) & (minute["ts"] < hi)])
             meal_parts.append(meals[(meals["ts"] >= lo) & (meals["ts"] < hi)])
         part = pd.concat(minute_parts, ignore_index=True)
-        if len(part):
-            wh.run(insert_sql(f"{p}.live_minute", part))
         m = pd.concat(meal_parts, ignore_index=True)
-        if len(m):
-            wh.run(insert_sql(f"{p}.live_meals", m))
+        statements = ([insert_sql(f"{p}.live_minute", part)] if len(part) else []) + \
+                     ([insert_sql(f"{p}.live_meals", m)] if len(m) else [])
+        if len(statements) > 1:
+            wh.store._parallel(wh.run, statements)  # minute data and meals go in at the same time
+        else:
+            for statement in statements:
+                wh.run(statement)
         block = int(offset / pd.Timedelta(hours=6))  # progress every 6 hours of data
         if block != last_block:
             last_block = block

@@ -199,19 +199,14 @@ def _cached_users(_store) -> list:
     return _store.users()
 
 
-@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your wristband and glucose data…")
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner=False)
 def _cached_inputs(_store, pid: str, signature: str):
     return _store.read_inputs(pid)
 
 
-@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your cases and discoveries…")
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner=False)
 def _cached_state(_store, pid: str, signature: str):
     return _store.read_state(pid)
-
-
-def clear_cache() -> None:
-    for fn in (_cached_users, _cached_inputs, _cached_state):
-        fn.clear()
 
 
 # Local files are instant and change with every replay step, so only Databricks reads are cached.
@@ -223,14 +218,23 @@ read_state = (lambda p: _cached_state(store, p, results_signature)) if store.rea
 
 if store.read_only:
     @st.fragment(run_every=REFRESH_SECONDS)
-    def live_updates(seen: str) -> None:
-        """Every few seconds ask Databricks whether the agent saved anything new; reload the page only if it did."""
-        if store.signature() != seen:
+    def sync_panel(seen: str, pid: str) -> None:
+        """Runs on its own every few seconds without blocking the page: checks Databricks for new agent results,
+        loads them in the background, and only then swaps them in (an instant rerun from the warm cache)."""
+        status = st.empty()
+        sync_now = st.button("⟳ Sync now", key="sync_now", use_container_width=True,
+                             help="Fetch the latest results from Databricks right away")
+        latest = store.signature()
+        if sync_now or latest != seen:
+            status.caption("⟳ Syncing with Databricks…")
+            if sync_now:
+                _cached_inputs.clear()
+                _cached_state.clear()
+            _cached_inputs(store, pid, latest)
+            _cached_state(store, pid, latest)
+            st.session_state["synced"] = (pid, latest)
             st.rerun()
-        st.caption(f"● Live: checks Databricks every {REFRESH_SECONDS:g}s · last check {pd.Timestamp.now():%H:%M:%S}")
-
-    with st.sidebar:
-        live_updates(results_signature)
+        status.caption(f"● In sync with Databricks · checked {pd.Timestamp.now():%H:%M:%S}")
 
 # Sign-in list: in Databricks mode the `users` table (all users, whether or not the agent has results for them yet);
 # locally, users whose participant is prepared on this laptop.
@@ -280,6 +284,8 @@ with st.sidebar:
         st.rerun()
     use_llm = st.toggle("Gemini agent", value=bool(gemini_api_key()), disabled=not gemini_api_key() or store.read_only,
                         help="Without GEMINI_API_KEY the rule-based investigator runs the same tools.")
+    if store.read_only:
+        sync_panel(results_signature, pid)
 
 
 def load_engine(pid: str) -> Engine:
@@ -290,15 +296,20 @@ def load_engine(pid: str) -> Engine:
     return eng
 
 
+first_load = store.read_only and st.session_state.get("synced") != (pid, results_signature)
+loading_note = st.empty()
+if first_load:
+    loading_note.caption("Loading your casebook from Databricks…")
 eng = load_engine(pid)
+loading_note.empty()
+if store.read_only:
+    st.session_state["synced"] = (pid, results_signature)
 if eng.minute.empty or pd.isna(eng.start):
     # Happens while a live replay restarts: 02_replayer cleared this participant and the stream hasn't refilled it yet.
     st.title(f"Hi, {user.name}")
     st.info("Your data is streaming in and nothing has arrived yet. This page updates by itself"
             + (" as soon as it does." if store.read_only else "; press Refresh in a moment."))
-    if st.button("Refresh"):
-        if store.read_only:
-            clear_cache()
+    if not store.read_only and st.button("Refresh"):
         st.rerun()
     st.stop()
 nb = eng.notebook
@@ -309,10 +320,7 @@ with st.sidebar:
     pct = 0.0 if eng.until is None else (eng.until - eng.start) / (eng.end - eng.start)
     st.progress(min(max(pct, 0.0), 1.0), text=f"{now:%a %b %d, %H:%M}" if eng.until is not None else "Not started")
     if store.read_only:
-        st.caption("Reading results from Databricks; new results appear automatically. Refresh forces a full reload.")
-        if st.button("Refresh", use_container_width=True):
-            clear_cache()
-            st.rerun()
+        st.caption("Results stream in from Databricks automatically; use ⟳ Sync now above to fetch them right away.")
     else:
         c1, c2 = st.columns(2)
         step = None
