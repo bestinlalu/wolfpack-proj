@@ -243,6 +243,15 @@ def load_engine(pid: str) -> Engine:
 
 
 eng = load_engine(pid)
+if eng.minute.empty or pd.isna(eng.start):
+    # Happens while a live replay restarts: 02_replayer cleared this participant and the stream hasn't refilled it yet.
+    st.title(f"Hi, {user.name}")
+    st.info("Your data is streaming in and nothing has arrived yet. Press Refresh in a moment.")
+    if st.button("Refresh"):
+        if store.read_only:
+            clear_cache()
+        st.rerun()
+    st.stop()
 nb = eng.notebook
 now = eng.until or eng.start
 
