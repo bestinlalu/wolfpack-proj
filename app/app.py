@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bodylab import celebrity_cases, meal_photo, voice  # noqa: E402
 from bodylab import patterns  # noqa: E402
-from bodylab import voice_sessions  # noqa: E402
+from bodylab import meditation  # noqa: E402
 import streamlit.components.v1 as components  # noqa: E402
 from bodylab.agent.investigator import make_investigator  # noqa: E402
 from bodylab.agent.chat import BodyLabChat  # noqa: E402
@@ -295,7 +295,7 @@ if store.read_only:
         status.caption(st.session_state.get("sync_status", "● In sync with Databricks"))
         sync_now = st.button("⟳ Sync now", key="sync_now", use_container_width=True,
                              help="Fetch the latest results from Databricks right away")
-        if any(v is True and (k in ("recap_pending", "story_pending") or k.startswith("voice_pending_"))
+        if any(v is True and (k in ("recap_pending", "visualization_pending") or k.startswith("meditation_pending_"))
                for k, v in st.session_state.items()):
             _show(status, "⏸ Sync paused while your audio is prepared")
             return
@@ -472,99 +472,94 @@ def _speak_cached(text: str) -> bytes | None:
     return cache[text]
 
 
-def voices_tab() -> None:
-    st.markdown("## Voices")
-    st.caption("Guided sessions and bedtime stories. Gemini writes the words; ElevenLabs reads them.")
+def mindfulness_tab() -> None:
+    st.markdown("## Mindfulness")
+    st.caption("Guided meditations, written by Gemini and read aloud by ElevenLabs.")
     if not elevenlabs_api_key():
         st.info("Set `ELEVENLABS_API_KEY` (and your own `ELEVENLABS_VOICE_ID`) to hear these read aloud.")
 
     def _ask(key: str) -> None:  # runs before the rerun, so the background sync pauses while we generate
         st.session_state[key] = True
 
-    # ---- guided sessions
-    st.markdown("### Guided sessions")
-    mode = voice_sessions.MODES[st.radio("Session", list(voice_sessions.MODES), horizontal=True,
-                                         format_func=lambda k: voice_sessions.MODES[k].name, key="voice_mode")]
-    c1, c2, c3 = st.columns(3)
-    work = c1.number_input(f"{mode.work_label} (min)", 1, 180, mode.work_min, key=f"vw_{mode.key}")
-    rest = c2.number_input(f"{mode.rest_label} (min)", 0, 60, mode.rest_min, key=f"vr_{mode.key}",
-                           disabled=mode.rounds == 1)
-    rounds = c3.number_input("Rounds", 1, 8, mode.rounds, key=f"vn_{mode.key}")
-    session_key = f"voice_session_{pid}_{mode.key}"
-    pending = f"voice_pending_{mode.key}"
-    st.button(f"🎙 Prepare {mode.name.lower()} session", key=f"prep_{mode.key}", on_click=_ask, args=(pending,))
+    # ---- timed guided meditations
+    st.markdown("### Guided meditation")
+    practice = meditation.PRACTICES[st.radio("Practice", list(meditation.PRACTICES), horizontal=True,
+                                             format_func=lambda k: meditation.PRACTICES[k].name, key="med_practice")]
+    c1, c2 = st.columns(2)
+    minutes = c1.number_input("Minutes per round", 1, 60, practice.round_min, key=f"mm_{practice.key}")
+    rounds = c2.number_input("Rounds", 1, 8, practice.rounds, key=f"mn_{practice.key}")
+    session_key = f"meditation_{pid}_{practice.key}"
+    pending = f"meditation_pending_{practice.key}"
+    st.button(f"Prepare {practice.name.lower()}", key=f"prep_{practice.key}", on_click=_ask, args=(pending,))
     if st.session_state.get(pending):
         try:
-            with st.spinner("Writing and recording your cues…"):
-                cues = voice_sessions.write_cues(mode, user.name, voice.recap_text(nb, now), work, rest)
+            with st.spinner("Writing and recording your meditation…"):
+                cues = meditation.write_cues(practice, user.name, voice.recap_text(nb, now), minutes, rounds)
                 audio, note = {}, ""
-                for c in voice_sessions.cue_names(mode):
+                for c in meditation.cue_names(practice, rounds):
                     try:
                         audio[c] = _speak_cached(cues[c])
                     except Exception as exc:
                         note = f"Voice unavailable: {exc}"
             st.session_state[session_key] = {"cues": cues, "audio": audio, "note": note,
-                                             "plan": (int(work), int(rest), int(rounds))}
+                                             "plan": (int(minutes), int(rounds))}
         finally:
             st.session_state[pending] = False
     prepared = st.session_state.get(session_key)
     if prepared:
-        w, r, n = prepared["plan"]
-        if (w, r, n) != (work, rest, rounds):
-            st.caption("Settings changed: prepare the session again to use them.")
-        components.html(voice_sessions.timer_html(mode, w, r if mode.rounds > 1 else 0, n, prepared["audio"],
-                                                  f"{pid}-{mode.key}"), height=200)
+        m, n = prepared["plan"]
+        if (m, n) != (minutes, rounds):
+            st.caption("Settings changed: prepare the meditation again to use them.")
+        components.html(meditation.timer_html(practice, m, n, prepared["audio"], f"{pid}-{practice.key}"), height=200)
         if prepared["note"]:
             st.caption(prepared["note"])
         elif not any(prepared["audio"].values()):
             st.caption("No voice yet: the timer runs silently until ElevenLabs is set up.")
         with st.expander("What you'll hear"):
-            for c in voice_sessions.cue_names(mode):
-                st.markdown(f"**{c.title()}** · {prepared['cues'][c]}")
-        if mode.key == "drive":
-            st.caption("Start it before you set off, then keep your eyes on the road; the cues play by themselves.")
+            for c in meditation.cue_names(practice, n):
+                st.markdown(f"**{'Check-in' if c == 'checkin' else c.title()}** · {prepared['cues'][c]}")
 
-    # ---- bedtime stories
-    st.markdown("### Bedtime story")
+    # ---- guided visualization
+    st.markdown("### Guided visualization")
     if not gemini_api_key():
-        st.info("Set `GEMINI_API_KEY` to have Gemini write bedtime stories.")
+        st.info("Set `GEMINI_API_KEY` to have Gemini write guided visualizations.")
         return
     s1, s2 = st.columns([3, 1])
-    theme = s1.text_input("Theme (optional)", placeholder="a lighthouse keeper, a slow train through snow…",
-                          key="story_theme")
-    length = s2.selectbox("Length", list(voice_sessions.STORY_LENGTHS), key="story_length")
-    story_key = f"voice_story_{pid}"
-    st.button("🌙 Tell me a story", key="story_go", on_click=_ask, args=("story_pending",))
-    if st.session_state.get("story_pending"):
+    theme = s1.text_input("Setting (optional)", placeholder="a quiet beach at dawn, a forest after rain…",
+                          key="viz_theme")
+    length = s2.selectbox("Length", list(meditation.VISUALIZATION_LENGTHS), key="viz_length")
+    viz_key = f"visualization_{pid}"
+    st.button("Create visualization", key="viz_go", on_click=_ask, args=("visualization_pending",))
+    if st.session_state.get("visualization_pending"):
         try:
-            with st.spinner("Writing tonight's story…"):
-                title, story = voice_sessions.write_story(user.name, theme, voice_sessions.STORY_LENGTHS[length])
+            with st.spinner("Writing your meditation…"):
+                title, script = meditation.write_visualization(user.name, theme, meditation.VISUALIZATION_LENGTHS[length])
             note, audio = "", None
             with st.spinner("Recording it…"):
                 try:
-                    audio = _speak_cached(story)
+                    audio = _speak_cached(script)
                 except Exception as exc:
                     note = f"Voice unavailable: {exc}"
-            st.session_state[story_key] = {"title": title, "text": story, "audio": audio, "note": note}
+            st.session_state[viz_key] = {"title": title, "text": script, "audio": audio, "note": note}
         except Exception as exc:
-            st.error(f"Couldn't write a story right now: {exc}")
+            st.error(f"Couldn't write a meditation right now: {exc}")
         finally:
-            st.session_state["story_pending"] = False
-    told = st.session_state.get(story_key)
-    if told:
-        st.markdown(f"#### {escape(told['title'])}")
-        if told["audio"]:
-            st.audio(told["audio"], format="audio/mpeg")
-        elif told["note"]:
-            st.caption(told["note"])
-        with st.expander("📖 Read the story", expanded=False):
-            st.write(told["text"])
+            st.session_state["visualization_pending"] = False
+    made = st.session_state.get(viz_key)
+    if made:
+        st.markdown(f"#### {escape(made['title'])}")
+        if made["audio"]:
+            st.audio(made["audio"], format="audio/mpeg")
+        elif made["note"]:
+            st.caption(made["note"])
+        with st.expander("Read the meditation", expanded=False):
+            st.write(made["text"])
 
 
-tab_today, tab_case, tab_disc, tab_nb, tab_chat, tab_voice = st.tabs(
-    ["Today", "Cases", "Findings", "Casebook", "💬 Ask Sherlock Howls", "🎧 Voices"])
-with tab_voice:
-    voices_tab()
+tab_today, tab_case, tab_disc, tab_nb, tab_chat, tab_mind = st.tabs(
+    ["Today", "Cases", "Findings", "Casebook", "💬 Ask Sherlock Howls", "Mindfulness"])
+with tab_mind:
+    mindfulness_tab()
 
 if eng.until is None:
     with tab_today:
