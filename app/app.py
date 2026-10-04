@@ -40,7 +40,8 @@ st.markdown("""
 [data-testid="stHeader"] { background:transparent; }
 [data-testid="stTabs"] [role="tablist"] { border-bottom:1px solid var(--line); }
 [data-testid="stTabs"] [role="tab"][aria-selected="true"] { color:var(--acc); }
-[data-testid="stExpander"] { background:var(--card); border-color:var(--line); }
+[data-testid="stExpander"] { background:transparent; }
+[data-testid="stExpander"] details { background:var(--card); border-color:var(--line); border-radius:12px; overflow:hidden; }
 .sh-brand { display:flex; gap:12px; align-items:center; margin-bottom:20px; }
 .sh-brand svg { width:48px; height:48px; flex-shrink:0; }
 .sh-brand-name { font-family:'Bricolage Grotesque',system-ui,sans-serif; font-weight:700; font-size:23px; letter-spacing:-.03em; line-height:1.1; }
