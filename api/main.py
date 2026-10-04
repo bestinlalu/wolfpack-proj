@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import math
+import secrets
+import time
 from datetime import datetime
 from typing import Any
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -15,6 +17,7 @@ from bodylab.agent.chat import BodyLabChat
 from bodylab.config import gemini_api_key
 from bodylab.labs import LABS
 from bodylab.store import open_store
+from bodylab.users import authenticate, load_users, password_required
 
 app = FastAPI(title="Body Lab API", version="1.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
@@ -85,6 +88,33 @@ def lab_payload(nb) -> list[dict]:
     return out
 
 
+
+# Demo authentication. Tokens live only in server memory and are invalidated when
+# the API restarts. Each token is bound to exactly one participant.
+SESSIONS: dict[str, dict[str, Any]] = {}
+SESSION_TTL_SECONDS = 12 * 60 * 60
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=200)
+
+
+def current_session(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Sign in required")
+    token = authorization[7:].strip()
+    session = SESSIONS.get(token)
+    if not session or session["expires_at"] <= time.time():
+        SESSIONS.pop(token, None)
+        raise HTTPException(status_code=401, detail="Session expired. Please sign in again.")
+    return session
+
+
+def authorize_pid(pid: str, session: dict[str, Any]) -> None:
+    if session["pid"] != pid:
+        raise HTTPException(status_code=403, detail="This account cannot access that participant")
+
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -101,13 +131,55 @@ def health():
     return {"ok": True, "gemini_configured": bool(gemini_api_key())}
 
 
-@app.get("/api/participants")
-def participants():
-    return {"participants": open_store().pids()}
+@app.post("/api/auth/login")
+def login(req: LoginRequest):
+    if not password_required():
+        raise HTTPException(
+            status_code=503,
+            detail="BODYLAB_DEMO_PASSWORD is not configured",
+        )
+
+    users = load_users()
+    user = authenticate(users, req.username, req.password)
+
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password",
+        )
+
+    token = secrets.token_urlsafe(32)
+    SESSIONS[token] = {
+        "username": user.username,
+        "name": user.name,
+        "pid": user.pid,
+        "expires_at": time.time() + SESSION_TTL_SECONDS,
+    }
+
+    return {
+        "token": token,
+        "user": {
+            "username": user.username,
+            "name": user.name,
+            "participant_id": user.pid,
+        },
+    }
+    token = secrets.token_urlsafe(32)
+    SESSIONS[token] = {
+        "username": user.username, "name": user.name, "pid": user.pid,
+        "expires_at": time.time() + SESSION_TTL_SECONDS,
+    }
+    return {"token": token, "user": {"username": user.username, "name": user.name, "participant_id": user.pid}}
+
+
+@app.get("/api/auth/me")
+def me(session: dict[str, Any] = Depends(current_session)):
+    return {"user": {"username": session["username"], "name": session["name"], "participant_id": session["pid"]}}
 
 
 @app.get("/api/today/{pid}")
-def today(pid: str):
+def today(pid: str, session: dict[str, Any] = Depends(current_session)):
+    authorize_pid(pid, session)
     _, _, _, _, nb, now, agent = load_participant(pid)
     rank, points, next_rank = nb.rank()
     feed = sorted(nb.messages, key=lambda m: pd.Timestamp(m["ts"]), reverse=True)[:6]
@@ -127,7 +199,8 @@ def today(pid: str):
 
 
 @app.get("/api/cases/{pid}")
-def cases(pid: str):
+def cases(pid: str, session: dict[str, Any] = Depends(current_session)):
+    authorize_pid(pid, session)
     _, _, _, _, nb, _, _ = load_participant(pid)
     items = list(nb.events)
     items.sort(key=lambda e: pd.Timestamp(e.get("ts")), reverse=True)
@@ -135,7 +208,8 @@ def cases(pid: str):
 
 
 @app.get("/api/case/{pid}/{event_id}")
-def case_detail(pid: str, event_id: str):
+def case_detail(pid: str, event_id: str, session: dict[str, Any] = Depends(current_session)):
+    authorize_pid(pid, session)
     _, _, _, _, nb, _, _ = load_participant(pid)
     ev = next((e for e in nb.events if e.get("event_id") == event_id), None)
     if ev is None:
@@ -151,7 +225,8 @@ def case_detail(pid: str, event_id: str):
 
 
 @app.get("/api/discoveries/{pid}")
-def discoveries(pid: str):
+def discoveries(pid: str, session: dict[str, Any] = Depends(current_session)):
+    authorize_pid(pid, session)
     _, _, _, _, nb, _, _ = load_participant(pid)
     shown = [d for d in nb.discoveries if d.get("status") != "rejected"]
     rarity_order = {"legendary": 0, "rare": 1, "common": 2}
@@ -166,7 +241,8 @@ def discoveries(pid: str):
 
 
 @app.get("/api/notebook/{pid}")
-def notebook(pid: str):
+def notebook(pid: str, session: dict[str, Any] = Depends(current_session)):
+    authorize_pid(pid, session)
     _, _, _, _, nb, _, _ = load_participant(pid)
     order = {"testing": 0, "fading": 1, "confirmed": 2, "inconclusive": 3, "expired": 4, "rejected": 5}
     hyps = sorted(nb.hypotheses, key=lambda h: (order.get(h.get("status"), 9), h.get("hyp_id", "")))
@@ -189,12 +265,17 @@ def notebook(pid: str):
 
 # Kept for compatibility with the first mobile build. It now returns the same notebook data.
 @app.get("/api/hypotheses/{pid}")
-def hypotheses(pid: str):
-    return {"hypotheses": notebook(pid)["hypotheses"]}
+def hypotheses(pid: str, session: dict[str, Any] = Depends(current_session)):
+    authorize_pid(pid, session)
+    _, _, _, _, nb, _, _ = load_participant(pid)
+    order = {"testing": 0, "fading": 1, "confirmed": 2, "inconclusive": 3, "expired": 4, "rejected": 5}
+    hyps = sorted(nb.hypotheses, key=lambda h: (order.get(h.get("status"), 9), h.get("hyp_id", "")))
+    return {"hypotheses": rows(hyps)}
 
 
 @app.post("/api/chat")
-def chat(req: ChatRequest):
+def chat(req: ChatRequest, session: dict[str, Any] = Depends(current_session)):
+    authorize_pid(req.participant_id, session)
     if not gemini_api_key():
         raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured")
     _, _, _, features, nb, until, _ = load_participant(req.participant_id)

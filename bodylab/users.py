@@ -30,6 +30,13 @@ def load_users(path: Path = USERS_FILE) -> list[User]:
     return [User(**u) for u in json.loads(path.read_text())]
 
 
+def find_by_username(users: list[User], username: str | None) -> User | None:
+    if not username:
+        return None
+    normalized = username.strip().lower()
+    return next((u for u in users if u.username.lower() == normalized), None)
+
+
 def find_by_email(users: list[User], email: str | None) -> User | None:
     if not email:
         return None
@@ -42,4 +49,11 @@ def password_required() -> bool:
 
 def check_password(attempt: str) -> bool:
     expected = os.getenv("BODYLAB_DEMO_PASSWORD", "")
-    return not expected or hmac.compare_digest(attempt.encode(), expected.encode())
+    return bool(expected) and hmac.compare_digest(attempt.encode(), expected.encode())
+
+
+def authenticate(users: list[User], username: str, password: str) -> User | None:
+    user = find_by_username(users, username)
+    if user is None or not check_password(password):
+        return None
+    return user
