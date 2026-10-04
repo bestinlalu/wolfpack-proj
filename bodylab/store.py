@@ -115,6 +115,17 @@ class DatabricksSqlStore:
     def pids(self) -> list[str]:
         return sorted(self._q("agent_state")["pid"].unique().tolist())
 
+    def signature(self) -> str:
+        """One small query that changes whenever the agent saves new results for anyone."""
+        try:
+            df = self._q("agent_state")
+        except Exception:
+            return ""
+        if df.empty:
+            return "empty"
+        stamp = df["updated_at"] if "updated_at" in df else df["until"]
+        return "|".join(f"{p}@{s}" for p, s in sorted(zip(df["pid"], stamp.astype(str))))
+
     def read_inputs(self, pid: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         return self._q("live_minute", pid), self._q("live_meals", pid)
 

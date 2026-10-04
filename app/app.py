@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from html import escape
 from pathlib import Path
@@ -150,18 +151,19 @@ def get_store():
     return open_store()
 
 
+# Cached reads are keyed by the results signature, so new agent results are picked up as soon as it changes.
 @st.cache_data(ttl=CACHE_SECONDS, show_spinner="Checking for participants…")
-def _cached_pids(_store) -> list[str]:
+def _cached_pids(_store, signature: str) -> list[str]:
     return _store.pids()
 
 
 @st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your wristband and glucose data…")
-def _cached_inputs(_store, pid: str):
+def _cached_inputs(_store, pid: str, signature: str):
     return _store.read_inputs(pid)
 
 
 @st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your cases and discoveries…")
-def _cached_state(_store, pid: str):
+def _cached_state(_store, pid: str, signature: str):
     return _store.read_state(pid)
 
 
@@ -172,16 +174,29 @@ def clear_cache() -> None:
 
 # Local files are instant and change with every replay step, so only Databricks reads are cached.
 store = get_store()
-read_pids = (lambda: _cached_pids(store)) if store.read_only else store.pids
-read_inputs = (lambda p: _cached_inputs(store, p)) if store.read_only else store.read_inputs
-read_state = (lambda p: _cached_state(store, p)) if store.read_only else store.read_state
+REFRESH_SECONDS = float(os.getenv("BODYLAB_REFRESH_SECONDS", "2"))
+results_signature = store.signature() if store.read_only else ""
+read_pids = (lambda: _cached_pids(store, results_signature)) if store.read_only else store.pids
+read_inputs = (lambda p: _cached_inputs(store, p, results_signature)) if store.read_only else store.read_inputs
+read_state = (lambda p: _cached_state(store, p, results_signature)) if store.read_only else store.read_state
+
+if store.read_only:
+    @st.fragment(run_every=REFRESH_SECONDS)
+    def live_updates(seen: str) -> None:
+        """Every few seconds ask Databricks whether the agent saved anything new; reload the page only if it did."""
+        if store.signature() != seen:
+            st.rerun()
+        st.caption(f"● Live: checks Databricks every {REFRESH_SECONDS:g}s · last check {pd.Timestamp.now():%H:%M:%S}")
+
+    with st.sidebar:
+        live_updates(results_signature)
 
 pids = read_pids()
 if not pids:
     st.title("Body Lab")
     if store.read_only:
-        st.info("No results in Databricks yet. Run the `05_batch_all` notebook (or the streaming notebooks), "
-                "then press Refresh.")
+        st.info("No results in Databricks yet. Start `04_run_agent` (or `05_batch_all`); this page updates by itself "
+                "as soon as results arrive.")
         if st.button("Refresh"):
             clear_cache()
             st.rerun()
@@ -246,7 +261,8 @@ eng = load_engine(pid)
 if eng.minute.empty or pd.isna(eng.start):
     # Happens while a live replay restarts: 02_replayer cleared this participant and the stream hasn't refilled it yet.
     st.title(f"Hi, {user.name}")
-    st.info("Your data is streaming in and nothing has arrived yet. Press Refresh in a moment.")
+    st.info("Your data is streaming in and nothing has arrived yet. This page updates by itself"
+            + (" as soon as it does." if store.read_only else "; press Refresh in a moment."))
     if st.button("Refresh"):
         if store.read_only:
             clear_cache()
@@ -260,7 +276,7 @@ with st.sidebar:
     pct = 0.0 if eng.until is None else (eng.until - eng.start) / (eng.end - eng.start)
     st.progress(min(max(pct, 0.0), 1.0), text=f"{now:%a %b %d, %H:%M}" if eng.until is not None else "Not started")
     if store.read_only:
-        st.caption(f"Reading results from Databricks. Data is reused for {CACHE_SECONDS} seconds; Refresh loads the latest now.")
+        st.caption("Reading results from Databricks; new results appear automatically. Refresh forces a full reload.")
         if st.button("Refresh", use_container_width=True):
             clear_cache()
             st.rerun()

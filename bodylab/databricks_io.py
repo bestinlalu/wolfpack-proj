@@ -83,15 +83,37 @@ def read_pids_table(spark, table: str, pids: list[str]) -> pd.DataFrame:
     return pdf
 
 
-def save_states(spark, prefix: str, results: list[tuple]) -> None:
-    """results: (pid, features, notebook, until, agent) for each participant that changed; one write per table."""
+def _fingerprint(frames: dict[str, pd.DataFrame]) -> int:
+    total = 0
+    for pid, df in sorted(frames.items()):
+        if df is not None and not df.empty:
+            total += hash(pid) + int(pd.util.hash_pandas_object(df.astype(str), index=False).sum())
+    return total
+
+
+def save_states(spark, prefix: str, results: list[tuple], written: dict | None = None) -> None:
+    """results: (pid, features, notebook, until, agent) for each participant that changed; one write per table.
+
+    Pass the same `written` dict on every call to skip tables whose content hasn't changed since the last write
+    (each Delta write takes seconds, so this is most of the time saved per loop).
+    """
     if not results:
         return
+    written = {} if written is None else written
+    pids = tuple(sorted(pid for pid, *_ in results))
+
+    def write(table: str, frames: dict[str, pd.DataFrame]) -> None:
+        key, fp = (table, pids), _fingerprint(frames)
+        if written.get(key) == fp:
+            return
+        write_pids_table(spark, frames, table)
+        written[key] = fp
+
     for lab in LABS:
-        write_pids_table(spark, {pid: feats.get(lab, pd.DataFrame()) for pid, feats, *_ in results}, f"{prefix}.features_{lab}")
+        write(f"{prefix}.features_{lab}", {pid: feats.get(lab, pd.DataFrame()) for pid, feats, *_ in results})
     frames = {pid: nb.to_frames() for pid, _, nb, *_ in results}
     for name in TABLES:
-        write_pids_table(spark, {pid: f[name] for pid, f in frames.items()}, f"{prefix}.nb_{name}")
+        write(f"{prefix}.nb_{name}", {pid: f[name] for pid, f in frames.items()})
     now = pd.Timestamp.utcnow().tz_localize(None)
     state = {pid: pd.DataFrame([{"pid": pid, "until": pd.Timestamp(until), "agent": agent, "updated_at": now}])
              for pid, _, _, until, agent in results}

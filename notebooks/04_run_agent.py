@@ -75,6 +75,7 @@ print("Investigator:", investigator.name, "| participants:", ", ".join(pids))
 # Delta is read once at the start and written once per loop for everyone who changed.
 notebooks = {pid: load_notebook(spark, prefix, pid) for pid in pids}
 last: dict[str, pd.Timestamp] = {}
+written: dict = {}  # fingerprints of what's already in Delta, so unchanged tables aren't rewritten
 waiting_shown = False
 while time.time() < deadline:
     live = read_pids_table(spark, f"{prefix}.live_minute", pids)
@@ -105,11 +106,11 @@ while time.time() < deadline:
         for m in engine.notebook.messages[before:]:
             print(f"{pid} {pd.Timestamp(m['ts']):%a %b %d %H:%M} [{m['kind']}] {m['title']}")
     if changed:
-        save_states(spark, prefix, changed)
+        save_states(spark, prefix, changed, written)
     elif not last and not waiting_shown:
         print("Waiting for streamed data (scripts/stream_to_databricks.py or 02/03)...")
         waiting_shown = True
-    time.sleep(5)
+    time.sleep(2)
 print("Agent loop stopped at", {pid: str(t) for pid, t in last.items()})
 
 # COMMAND ----------

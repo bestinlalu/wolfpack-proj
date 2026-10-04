@@ -11,7 +11,7 @@ Data source (--source):
 
     python scripts/stream_to_databricks.py --pid 001
     python scripts/stream_to_databricks.py --all                     # everyone in bodylab/users.json, side by side
-    python scripts/stream_to_databricks.py --pid 001 002 --chunk-minutes 120 --no-reset   # faster, keep old results
+    python scripts/stream_to_databricks.py --pid 001 002 --chunk-minutes 240 --no-reset   # even faster, keep old results
 """
 from __future__ import annotations
 
@@ -124,8 +124,8 @@ def main() -> None:
     who.add_argument("--pid", nargs="+", help="participants to stream, e.g. --pid 001 002")
     who.add_argument("--all", action="store_true", help="every participant assigned to a user in bodylab/users.json")
     ap.add_argument("--source", choices=["local", "databricks"], default="local", help="where the prepared data is")
-    ap.add_argument("--chunk-minutes", type=int, default=60, help="minutes of data per insert")
-    ap.add_argument("--seconds", type=float, default=1.0, help="pause between inserts")
+    ap.add_argument("--chunk-minutes", type=int, default=120, help="minutes of data per insert")
+    ap.add_argument("--seconds", type=float, default=0.0, help="extra pause between inserts")
     ap.add_argument("--no-reset", action="store_true", help="keep these participants' earlier live data and results")
     args = ap.parse_args()
     pids = [u.pid for u in load_users()] if args.all else args.pid
