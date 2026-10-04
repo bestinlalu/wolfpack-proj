@@ -287,15 +287,18 @@ if store.read_only:
     def sync_panel(seen: str, pid: str) -> None:
         """Runs on its own every few seconds without blocking the page: checks Databricks for new agent results,
         loads them in the background, and only then swaps them in (an instant rerun from the warm cache)."""
+        # The status line always holds text (the last message until a new one replaces it), so its height never
+        # changes and the rest of the sidebar doesn't jump while a check runs.
         status = st.empty()
+        status.caption(st.session_state.get("sync_status", "● In sync with Databricks"))
         sync_now = st.button("⟳ Sync now", key="sync_now", use_container_width=True,
                              help="Fetch the latest results from Databricks right away")
         if st.session_state.get("recap_pending"):
-            status.caption("⏸ Sync paused while your recap is written")
+            _show(status, "⏸ Sync paused while your recap is written")
             return
         latest = store.signature()
         if sync_now or latest != seen:
-            status.caption("⟳ Syncing with Databricks…")
+            _show(status, "⟳ Syncing with Databricks…")
             if sync_now:
                 _cached_inputs.clear()
                 _cached_state.clear()
@@ -303,7 +306,11 @@ if store.read_only:
             _cached_state(store, pid, latest)
             st.session_state["synced"] = (pid, latest)
             st.rerun()
-        status.caption(f"● In sync with Databricks · checked {pd.Timestamp.now():%H:%M:%S}")
+        _show(status, f"● In sync with Databricks · checked {pd.Timestamp.now():%H:%M:%S}")
+
+    def _show(status, text: str) -> None:
+        st.session_state["sync_status"] = text
+        status.caption(text)
 
 # Sign-in list: in Databricks mode the `users` table (all users, whether or not the agent has results for them yet);
 # locally, users whose participant is prepared on this laptop.
