@@ -105,6 +105,11 @@ class DatabricksSqlStore:
 
     read_only = True
 
+    EMPTY_COLUMNS = {  # shape of a live table that hasn't been created yet
+        "live_minute": ("pid", "ts", "enmo_mg", "steps", "hr", "eda", "temp", "glucose", "worn"),
+        "live_meals": ("pid", "meal_id", "ts", "carbs", "carbs_missing", "items"),
+    }
+
     PARALLEL_READS = 4  # connections used to fetch one user's ~13 tables at once
 
     def __init__(self):
@@ -208,17 +213,19 @@ class DatabricksSqlStore:
         return "|".join(f"{p}@{s}" for p, s in sorted(zip(df["pid"], stamp.astype(str))))
 
     def read_inputs(self, pid: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-        minute, meals, photos = self._parallel(
-            lambda t: self._photo_meals(pid) if t == "photo_meals" else self._q(t, pid),
-            ["live_minute", "live_meals", "photo_meals"])
+        # A table that doesn't exist yet (nothing streamed to this workspace, no photo meal saved) reads as empty,
+        # so the app shows its "streaming in" screen instead of an error.
+        minute, meals, photos = self._parallel(lambda t: self._q_or_empty(t, pid),
+                                               ["live_minute", "live_meals", "photo_meals"])
         return minute, combine_meals(meals, photos)
 
-    def _photo_meals(self, pid: str) -> pd.DataFrame:
+    def _q_or_empty(self, table: str, pid: str) -> pd.DataFrame:
         try:
-            return self._q("photo_meals", pid)
+            return self._q(table, pid)
         except Exception as exc:
             if "TABLE_OR_VIEW_NOT_FOUND" in str(exc):
-                return pd.DataFrame()
+                return pd.DataFrame({c: pd.Series(dtype="datetime64[us]" if c == "ts" else object)
+                                     for c in self.EMPTY_COLUMNS.get(table, ())})
             raise
 
     def write_meal(self, pid: str, row: dict) -> None:

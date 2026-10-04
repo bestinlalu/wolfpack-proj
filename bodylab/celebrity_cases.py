@@ -22,9 +22,18 @@ CASES = (
     ("federer", "Roger Federer", "fuel", "steps_before", ">=", "pre-meal movement", "Do meals with more walking beforehand go with a smaller glucose rise?"),
     ("nadal", "Rafael Nadal", "movement", "hour", ">=", "walk timing", "Do later walks go with a lower walk heart rate?"),
     ("kohli", "Virat Kohli", "sleep", "dinner_gap_h", ">=", "dinner timing", "Does a longer gap between dinner and bed go with earlier sleep?"),
+    ("bolt", "Usain Bolt", "movement", "stress_before", "<=", "calm before moving", "Does a calmer few hours before a walk go with a lower walk heart rate?"),
+    ("kipchoge", "Eliud Kipchoge", "stress", "steps_earlier", ">=", "active days", "Do more active days go with a calmer stress signal?"),
+    ("djokovic", "Novak Djokovic", "movement", "hour", "<=", "walk timing", "Do earlier walks go with a lower walk heart rate?"),
+    ("lebron", "LeBron James", "movement", "since_last_meal_h", ">=", "meal and movement timing", "Does leaving more time after a meal go with a lower walk heart rate?"),
+    ("osaka", "Naomi Osaka", "movement", "temp_before", "<=", "cool starts", "Does cooler skin before a walk go with a lower walk heart rate?"),
+    ("curry", "Stephen Curry", "fuel", "hour", "<=", "meal timing", "Do earlier meals go with a smaller glucose rise?"),
+    ("mbappe", "Kylian Mbappé", "fuel", "since_last_meal_h", "<=", "regular meals", "Do shorter gaps between meals go with a smaller glucose rise?"),
 )
 
-CASE_DIRECTIONS = {key: (1 if key == "ronaldo" else -1) for key, *_ in CASES}
+# Which way the matching hypothesis points: +1 means more of the factor goes with a higher response.
+CASE_DIRECTIONS = {key: -1 for key, *_ in CASES}
+CASE_DIRECTIONS.update(ronaldo=1, bolt=1, djokovic=1, osaka=1, curry=1, mbappe=1)
 
 
 
@@ -74,14 +83,23 @@ def suggest(features: dict[str, pd.DataFrame], now: pd.Timestamp,
         if feature.startswith("steps") or feature == "late_steps":
             threshold = float(round(threshold / 10) * 10)
             target = f'{"At least" if op == ">=" else "At most"} {threshold:,.0f} steps '
-            target += {"steps_before": "in the hour before a meal", "steps_after": "in the hour after a meal", "late_steps": "after 21:00"}[feature]
+            target += {"steps_before": "in the hour before a meal", "steps_after": "in the hour after a meal", "late_steps": "after 21:00",
+                       "steps_earlier": "earlier in the day"}[feature]
         elif feature == "prev_sleep_h":
             target = f"Observe situations after at least {threshold:.1f} hours of recorded sleep"
         elif feature == "dinner_gap_h":
             target = f"Observe nights with at least {threshold:.1f} hours between dinner and sleep"
+        elif feature == "stress_before":
+            target = "Observe walks after a calmer-than-usual few hours (stress signal at or below your typical level)"
+        elif feature == "temp_before":
+            target = f"Observe walks that start with skin at or below {threshold:.1f} °C"
+        elif feature == "since_last_meal_h":
+            target = (f"Observe walks at least {threshold:.1f} hours after a meal" if lab == "movement"
+                      else f"Observe meals at most {threshold:.1f} hours after the previous one")
         else:
             hour, minute = divmod(round(threshold * 60), 60)
-            target = f"Observe walks starting at or after {hour:02d}:{minute:02d}"
+            what = "walks" if lab == "movement" else "meals"
+            target = f"Observe {what} starting at or {'after' if op == '>=' else 'before'} {hour:02d}:{minute:02d}"
         leads.append(dict(case_id=key, celebrity=celebrity, lab=lab, feature=feature, op=op,
                           hyp_id=hypothesis["hyp_id"], direction=CASE_DIRECTIONS[key],
                           threshold=threshold, theme=theme, question=question, target_text=target,

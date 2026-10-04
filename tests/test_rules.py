@@ -63,7 +63,7 @@ def test_rank_progression():
     nb = Notebook("S01")
     assert nb.rank()[0] == "Rookie"
     nb.discoveries = [{"rarity": "rare", "status": "confirmed"}] * 4
-    assert nb.rank()[0] == "Detective"
+    assert nb.rank()[0] == "Inspector"
 
 
 def test_glucose_gap_fails_check():

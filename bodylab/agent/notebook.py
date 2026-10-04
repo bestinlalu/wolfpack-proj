@@ -42,7 +42,7 @@ QUESTS = {
     ("sleep", "dinner_gap_h", -1): ("Finish dinner 3+ hours before bed", "dinner_gap_h", ">=", 3.0, 2),
 }
 
-RANKS = [(0, "Rookie"), (3, "Sleuth"), (8, "Detective"), (20, "Commissioner")]
+RANKS = [(0, "Rookie"), (2, "Sleuth"), (4, "Detective"), (7, "Inspector"), (11, "Commissioner")]
 RARITY_POINTS = {"common": 1, "rare": 2, "legendary": 3}
 
 
@@ -258,7 +258,12 @@ class Notebook:
 
     # ---------- summary ----------
     def points(self) -> int:
-        return sum(RARITY_POINTS.get(d["rarity"], 1) for d in self.discoveries if d["status"] != "rejected")
+        """Earned points only ever go up: every card counts once confirmed (even if it later fades), and every idea
+        ruled out earns a point, since eliminating a suspect is detective work too."""
+        carded = {d.get("hyp_id") for d in self.discoveries}
+        found = sum(RARITY_POINTS.get(d["rarity"], 1) for d in self.discoveries)
+        ruled_out = sum(h["status"] == "rejected" and h["hyp_id"] not in carded for h in self.hypotheses)
+        return found + ruled_out
 
     def rank(self) -> tuple[str, int, int | None]:
         pts = self.points()

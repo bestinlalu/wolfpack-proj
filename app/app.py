@@ -296,7 +296,7 @@ if store.read_only:
         status.caption(st.session_state.get("sync_status", "● In sync with Databricks"))
         sync_now = st.button("⟳ Sync now", key="sync_now", use_container_width=True,
                              help="Fetch the latest results from Databricks right away")
-        if any(v is True and (k in ("recap_pending", "visualization_pending") or k.startswith("meditation_pending_"))
+        if any(v is True and (k in ("recap_pending", "visualization_pending", "photo_pending") or k.startswith("meditation_pending_"))
                for k, v in st.session_state.items()):
             _show(status, "⏸ Sync paused while your audio is prepared")
             return
@@ -411,50 +411,28 @@ if json.dumps(celebrity_quests) != previous_quests:
     persist_celebrity_quests(celebrity_quests)
 sherlock_leads(celebrity_quests, now)
 
-with st.sidebar:
-    st.markdown("#### Replay")
-    pct = 0.0 if eng.until is None else (eng.until - eng.start) / (eng.end - eng.start)
-    st.progress(min(max(pct, 0.0), 1.0), text=f"{now:%a %b %d, %H:%M}" if eng.until is not None else "Not started")
-    if store.read_only:
-        st.caption("Results stream in from Databricks automatically; use ⟳ Sync now above to fetch them right away.")
-    else:
-        c1, c2 = st.columns(2)
-        step = None
-        if c1.button("+6 hours", use_container_width=True):
-            step = pd.Timedelta(hours=6)
-        if c2.button("+1 day", use_container_width=True):
-            step = pd.Timedelta(days=1)
-        if c1.button("Play to end", use_container_width=True):
-            bar = st.progress(0.0, text="Replaying")
-            t = (eng.until or eng.start) + pd.Timedelta(hours=6)
-            while t <= eng.end + pd.Timedelta(hours=6):
-                eng.step(t)
-                bar.progress(min((t - eng.start) / (eng.end - eng.start), 1.0), text=f"{min(t, eng.end):%a %H:%M}")
-                t += pd.Timedelta(hours=6)
-            store.write_state(pid, eng.features, eng.notebook, eng.until, eng.investigator.name)
-            st.rerun()
-        if c2.button("Reset", use_container_width=True):
-            store.reset_state(pid)
-            st.rerun()
-        if step is not None:
-            with st.spinner("Agent investigating"):
-                eng.step((eng.until or eng.start) + step)
-            store.write_state(pid, eng.features, eng.notebook, eng.until, eng.investigator.name)
-            st.rerun()
-
+@st.fragment
+def meal_photo_panel() -> None:
+    """Its own fragment: choosing a photo, estimating and editing the guess rerun only this panel, not the page."""
     with st.expander("Log a meal by photo"):
         guess_key = f"meal_guess_{pid}"
         notice = st.session_state.pop(f"meal_saved_{pid}", None)
         if notice:
             st.success(notice)
         photo = st.file_uploader("Meal photo", type=["jpg", "jpeg", "png", "webp"], key=f"photo_{pid}")
-        if photo is not None and st.button("Estimate with Gemini", disabled=not gemini_api_key()):
+        st.button("Estimate with Gemini", disabled=photo is None or not gemini_api_key(), key=f"estimate_{pid}",
+                  on_click=lambda: st.session_state.update(photo_pending=True))
+        if st.session_state.get("photo_pending"):
             try:
-                guess = meal_photo.analyze(photo.getvalue(), photo.type or "image/jpeg")
-                guess["meal_id"] = f"{pid}-photo-{uuid4().hex}"
-                st.session_state[guess_key] = guess
+                if photo is not None:
+                    with st.spinner("Gemini is reading your meal…"):
+                        guess = meal_photo.analyze(photo.getvalue(), photo.type or "image/jpeg")
+                    guess["meal_id"] = f"{pid}-photo-{uuid4().hex}"
+                    st.session_state[guess_key] = guess
             except Exception as exc:
                 st.error(f"Could not read the photo: {exc}")
+            finally:
+                st.session_state["photo_pending"] = False
         guess = st.session_state.get(guess_key)
         if guess:
             st.caption(f"Confidence: {guess['confidence']}. Photo carbs are rough, so this meal gets wider comparison ranges.")
@@ -490,7 +468,41 @@ with st.sidebar:
                 except Exception as exc:
                     st.error(f"Could not save the meal: {exc}")
                 else:
-                    st.rerun()
+                    st.rerun(scope="app")  # the saved meal changes the analysis, so refresh the whole page
+
+
+with st.sidebar:
+    st.markdown("#### Replay")
+    pct = 0.0 if eng.until is None else (eng.until - eng.start) / (eng.end - eng.start)
+    st.progress(min(max(pct, 0.0), 1.0), text=f"{now:%a %b %d, %H:%M}" if eng.until is not None else "Not started")
+    if store.read_only:
+        st.caption("Results stream in from Databricks automatically; use ⟳ Sync now above to fetch them right away.")
+    else:
+        c1, c2 = st.columns(2)
+        step = None
+        if c1.button("+6 hours", use_container_width=True):
+            step = pd.Timedelta(hours=6)
+        if c2.button("+1 day", use_container_width=True):
+            step = pd.Timedelta(days=1)
+        if c1.button("Play to end", use_container_width=True):
+            bar = st.progress(0.0, text="Replaying")
+            t = (eng.until or eng.start) + pd.Timedelta(hours=6)
+            while t <= eng.end + pd.Timedelta(hours=6):
+                eng.step(t)
+                bar.progress(min((t - eng.start) / (eng.end - eng.start), 1.0), text=f"{min(t, eng.end):%a %H:%M}")
+                t += pd.Timedelta(hours=6)
+            store.write_state(pid, eng.features, eng.notebook, eng.until, eng.investigator.name)
+            st.rerun()
+        if c2.button("Reset", use_container_width=True):
+            store.reset_state(pid)
+            st.rerun()
+        if step is not None:
+            with st.spinner("Agent investigating"):
+                eng.step((eng.until or eng.start) + step)
+            store.write_state(pid, eng.features, eng.notebook, eng.until, eng.investigator.name)
+            st.rerun()
+
+    meal_photo_panel()
     st.caption("Sherlock Howls reports what was different, never causes. Not medical advice.")
 
 def _speak_cached(text: str) -> bytes | None:

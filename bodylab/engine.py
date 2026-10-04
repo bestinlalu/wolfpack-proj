@@ -28,7 +28,11 @@ def effect_text(d: dict) -> str:
     if not np.isfinite(a):
         return ""
     if lab == "fuel":
-        return f"{abs(p):.0f}% {'bigger' if a > 0 else 'smaller'} glucose rise" if np.isfinite(p) else f"{abs(a):.0f} mg/dL {'bigger' if a > 0 else 'smaller'} rise"
+        base = d.get("base_response", np.nan)
+        # A percentage of a small usual rise reads as absurd ("384% bigger"), so use mg/dL there.
+        if np.isfinite(p) and base is not None and np.isfinite(base) and base >= 20 and abs(p) <= 100:
+            return f"{abs(p):.0f}% {'bigger' if a > 0 else 'smaller'} glucose rise"
+        return f"{abs(a):.0f} mg/dL {'bigger' if a > 0 else 'smaller'} glucose rise"
     if lab == "movement":
         return f"{abs(a):.0f} bpm {'higher' if a > 0 else 'lower'} walk heart rate"
     if lab == "sleep":
