@@ -42,7 +42,7 @@ QUESTS = {
     ("sleep", "dinner_gap_h", -1): ("Finish dinner 3+ hours before bed", "dinner_gap_h", ">=", 3.0, 2),
 }
 
-RANKS = [(0, "Intern"), (3, "Lab Tech"), (8, "Researcher"), (20, "Professor")]
+RANKS = [(0, "Rookie"), (3, "Sleuth"), (8, "Detective"), (20, "Commissioner")]
 RARITY_POINTS = {"common": 1, "rare": 2, "legendary": 3}
 
 
