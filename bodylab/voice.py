@@ -41,7 +41,9 @@ def polish(text: str) -> str:
     try:
         from google import genai
 
-        client = genai.Client(api_key=gemini_api_key())
+        from google.genai import types as _types
+
+        client = genai.Client(api_key=gemini_api_key(), http_options=_types.HttpOptions(timeout=20_000))  # ms; never hang the recap
         prompt = ("Rewrite this as a friendly 30-second spoken recap (under 85 words). Keep every number and fact exactly; "
                   "add nothing new; no medical advice; plain sentences, no lists.\n\n" + text)
         from google.genai import types

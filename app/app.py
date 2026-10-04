@@ -290,6 +290,9 @@ if store.read_only:
         status = st.empty()
         sync_now = st.button("⟳ Sync now", key="sync_now", use_container_width=True,
                              help="Fetch the latest results from Databricks right away")
+        if st.session_state.get("recap_pending"):
+            status.caption("⏸ Sync paused while your recap is written")
+            return
         latest = store.signature()
         if sync_now or latest != seen:
             status.caption("⟳ Syncing with Databricks…")
@@ -543,18 +546,35 @@ with tab_today:
                              f'<div class="lab-details"><div class="bl-sub">{lab.situation}s</div>{extra}</div>'
                              f'<div class="lab-badges">{pill(f"{cards} cards", "p-acc")}{pill(f"{open_h} open", "p-plain")}</div></div>')
         st.markdown('<div class="lab-grid">' + ''.join(lab_cards) + '</div>', unsafe_allow_html=True)
-        if st.button("▶ Weekly recap", use_container_width=True):
-            text = voice.recap_text(nb, now)
-            text = voice.polish(text)
-            st.write(text)
-            try:
-                audio = voice.speak(text)
-                if audio:
-                    st.audio(audio, format="audio/mpeg")
-                else:
-                    st.caption("Set ELEVENLABS_API_KEY to hear this read aloud.")
-            except Exception as exc:
-                st.caption(f"Voice unavailable: {exc}")
+        # The recap is kept in session state: the page reloads by itself when new results arrive (Databricks mode),
+        # which would otherwise wipe a recap that only existed on the click's run.
+        def _request_recap() -> None:
+            st.session_state["recap_pending"] = True
+            st.session_state.pop("recap", None)
+
+        st.button("▶ Weekly recap", use_container_width=True, on_click=_request_recap)
+        if st.session_state.get("recap_pending"):
+            with st.spinner("Writing your weekly recap…"):
+                text = voice.polish(voice.recap_text(nb, now))
+                audio, note = None, ""
+                try:
+                    audio = voice.speak(text)
+                    if not audio:
+                        note = "Set ELEVENLABS_API_KEY to hear this read aloud."
+                except Exception as exc:
+                    note = f"Voice unavailable: {exc}"
+            st.session_state["recap"] = {"pid": pid, "text": text, "audio": audio, "note": note}
+            st.session_state["recap_pending"] = False
+        recap = st.session_state.get("recap")
+        if recap and recap["pid"] == pid:
+            st.write(recap["text"])
+            if recap["audio"]:
+                st.audio(recap["audio"], format="audio/mpeg")
+            if recap["note"]:
+                st.caption(recap["note"])
+            if st.button("✕ Close recap", key="close_recap"):
+                st.session_state.pop("recap", None)
+                st.rerun()
 
 # ---------------------------------------------------------------- Case
 def situation_row(sid: str | None) -> tuple[str, pd.Series] | None:
