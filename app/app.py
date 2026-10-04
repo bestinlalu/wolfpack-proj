@@ -695,7 +695,7 @@ with tab_today:
              f'<div class="bl-sub bl-num">{pts} points · {to_next}</div><div class="bar"><i style="width:{width}%;background:var(--acc)"></i></div>')
         if not nb.quests and not celebrity_quests:
             card('<div class="bl-label">Quests · optional</div><div class="bl-sub">No quests currently</div>')
-        for q in nb.quests[-2:]:
+        for q in sorted(nb.quests, key=lambda q: bool(q["done"]))[:4]:  # in progress first
             card('<div class="bl-label">Quest · optional</div>' + quest_body(q))
         for q in celebrity_quests:
             card('<div class="bl-label">Quest · optional</div>' + celebrity_quest_body(q))

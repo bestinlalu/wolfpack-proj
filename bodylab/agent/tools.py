@@ -201,6 +201,8 @@ def open_hypothesis(ctx: ToolContext, situation_id: str, factor: str, direction:
     side = int(np.sign(ev[factor] - med)) if np.isfinite(med) and np.isfinite(ev[factor]) and ev[factor] != med else 1
     h, note = ctx.notebook.open_hypothesis(event, lab, factor, direction, ctx.now, side)
     event["hyp_id"] = h["hyp_id"]
+    if h["status"] == "testing":
+        ctx.notebook.add_quest(lab, factor, direction, ctx.features[lab], ctx.now)  # an optional way to help test it
     return {"hypothesis": h["hyp_id"], "claim": h["claim"], "note": note, "supports": h["supports"],
             "status": h["status"], "needed": SETTINGS.hypothesis.confirm_supports,
             "more_tests_needed": max(SETTINGS.hypothesis.confirm_supports - h["supports"], 0) if h["status"] == "testing" else 0}

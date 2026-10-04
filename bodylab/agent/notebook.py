@@ -40,7 +40,33 @@ QUESTS = {
     ("movement", "prev_sleep_h", -1): ("Sleep 7+ hours before a walk day", "prev_sleep_h", ">=", 7.0, 2),
     ("sleep", "late_steps", 1): ("Keep it calm after 21:00 twice", "late_steps", "<=", 500.0, 2),
     ("sleep", "dinner_gap_h", -1): ("Finish dinner 3+ hours before bed", "dinner_gap_h", ">=", 3.0, 2),
+    # Threshold None: the person's own typical value at the time of the card, filled into the title as {v}.
+    ("movement", "stress_before", 1): ("Take a walk after a calmer-than-usual few hours", "stress_before", "<=", None, 2),
+    ("movement", "hour", 1): ("Walk before {v} twice", "hour", "<=", None, 2),
+    ("movement", "hour", -1): ("Take a walk after {v} twice", "hour", ">=", None, 2),
+    ("movement", "temp_before", 1): ("Start a walk with cool skin (under {v})", "temp_before", "<=", None, 2),
+    ("movement", "since_last_meal_h", -1): ("Wait {v} after eating before a walk", "since_last_meal_h", ">=", None, 2),
+    ("movement", "since_last_meal_h", 1): ("Walk within {v} of a meal", "since_last_meal_h", "<=", None, 2),
+    ("stress", "steps_earlier", -1): ("Have an active day: {v} earlier in the day, twice", "steps_earlier", ">=", None, 2),
+    ("stress", "prev_sleep_h", -1): ("Sleep {v}+ before a busy day", "prev_sleep_h", ">=", None, 2),
+    ("fuel", "since_last_meal_h", 1): ("Eat within {v} of your last meal", "since_last_meal_h", "<=", None, 2),
+    ("fuel", "hour", 1): ("Have a meal before {v}", "hour", "<=", None, 2),
+    ("fuel", "prev_sleep_h", -1): ("Sleep {v}+ before a day of normal meals", "prev_sleep_h", ">=", None, 2),
+    ("sleep", "day_stress", 1): ("Have a calmer-than-usual afternoon before bed", "day_stress", "<=", None, 2),
+    ("sleep", "evening_glucose", 1): ("Keep evening snacks light twice", "evening_glucose", "<=", None, 2),
+    ("stress", "after_meal", 1): ("Take a calm two hours without a meal", "after_meal", "<=", 0.0, 2),
 }
+
+
+def _quest_value(feature: str, v: float) -> str:
+    if feature == "hour":
+        h, m = divmod(round(v * 60), 60)
+        return f"{h:02d}:{m:02d}"
+    if feature.startswith("steps"):
+        return f"{round(v, -2):,.0f} steps"
+    if feature == "temp_before":
+        return f"{v:.1f} °C"
+    return f"{v:.1f} hours"
 
 RANKS = [(0, "Rookie"), (2, "Sleuth"), (4, "Detective"), (7, "Inspector"), (11, "Commissioner")]
 RARITY_POINTS = {"common": 1, "rare": 2, "legendary": 3}
@@ -236,10 +262,31 @@ class Notebook:
             "confirmed_at": ts, "status": "confirmed", "n_tested": len(tested), "side": side, "factor": h["factor"],
         }
         self.discoveries.append(d)
-        q = QUESTS.get(key)
-        if q:
-            self.quests.append({"pid": self.pid, "quest_id": f"Q{len(self.quests) + 1}", "card_id": d["card_id"], "lab": lab, "title": q[0], "feature": q[1], "op": q[2], "threshold": q[3], "target": q[4], "progress": 0, "started_at": ts, "done": False})
+        self.add_quest(lab, h["factor"], h["direction"], situations, ts, card_id=d["card_id"])
         return d
+
+    def add_quest(self, lab: str, factor: str, direction: int, situations: pd.DataFrame, ts: pd.Timestamp,
+                  card_id: str | None = None) -> dict | None:
+        """An optional quest that collects situations for this idea, when it is opened and again when it becomes a
+        card. Targets marked None are the person's own typical value so far. One quest per thing being tracked."""
+        q = QUESTS.get((lab, factor, direction)) or QUESTS.get((lab, factor, -direction))
+        if not q or any((x["lab"], x["feature"]) == (lab, q[1]) for x in self.quests):
+            return None
+        title, threshold = q[0], q[3]
+        if threshold is None:
+            past = situations[situations["ts"] <= ts] if "ts" in situations else situations.iloc[0:0]
+            values = pd.to_numeric(past[q[1]], errors="coerce").dropna() if q[1] in past else pd.Series(dtype=float)
+            if not len(values):
+                return None
+            threshold = float(values.median())
+            if q[1] == "steps_earlier":
+                threshold = max(round(threshold, -2), 100.0)
+            title = title.format(v=_quest_value(q[1], threshold))
+        quest = {"pid": self.pid, "quest_id": f"Q{len(self.quests) + 1}", "card_id": card_id, "lab": lab, "title": title,
+                 "feature": q[1], "op": q[2], "threshold": threshold, "target": q[4], "progress": 0, "started_at": ts,
+                 "done": False}
+        self.quests.append(quest)
+        return quest
 
     def sync_discovery_status(self) -> None:
         by_h = {h["hyp_id"]: h for h in self.hypotheses}
