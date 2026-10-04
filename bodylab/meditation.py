@@ -217,7 +217,7 @@ const P = __PHASES__, S = __SOUNDS__, M = __MUSIC__, KEY = "bodylab-timer-" + __
 const total = P.reduce((a, p) => a + p.sec, 0);
 const $ = id => document.getElementById(id);
 const music = M ? new Audio(M) : null;
-let musicOn = true, tick = null, played = -1, dragging = false;
+let musicOn = true, tick = null, played = -1, dragging = false, voice = null;
 let st = null;  // {start: ms when position 0 was, paused: seconds or null}
 try { st = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (e) {}
 $("seek").max = total;
@@ -226,12 +226,25 @@ function save() { try { st ? localStorage.setItem(KEY, JSON.stringify(st)) : loc
 function vol() { return $("mvol").value / 100; }
 function musicPlay() { if (music && musicOn && st && st.paused === null) { music.volume = vol(); music.play().catch(() => {}); } }
 function musicPause() { if (music) music.pause(); }
-function play(cue) {  // the music dips while the voice speaks
+function stopVoice() { if (voice) { voice.pause(); voice = null; } if (music) music.volume = vol(); }
+function play(cue, offset = 0) {  // the music dips while the voice speaks
+  stopVoice();
   if (!S[cue]) return;
   const a = new Audio(S[cue]);
-  if (music) { music.volume = vol() * 0.35; a.onended = () => { music.volume = vol(); }; }
-  a.play().catch(() => {});
+  voice = a;
+  if (music) { music.volume = vol() * 0.35; }
+  a.onended = () => { if (voice === a) voice = null; if (music) music.volume = vol(); };
+  if (offset > 0) {  // start part-way through, e.g. after a jump with the slider
+    a.addEventListener("loadedmetadata", () => {
+      if (offset >= a.duration) { a.onended(); return; }
+      a.currentTime = offset; a.play().catch(() => {});
+    }, {once: true});
+    a.load();
+  } else {
+    a.play().catch(() => {});
+  }
 }
+function seekMusic(t) { if (music && music.duration) music.currentTime = t % music.duration; }
 function pos() { return !st ? 0 : st.paused !== null ? st.paused : (Date.now() - st.start) / 1000; }
 function phaseAt(t) { let i = 0; while (i < P.length - 1 && t >= P[i].sec) { t -= P[i].sec; i++; } return [i, t]; }
 function fmt(s) { s = Math.max(0, Math.ceil(s)); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); }
@@ -256,11 +269,11 @@ $("go").onclick = () => { st = {start: Date.now(), paused: null}; played = -1; s
                           if (!tick) tick = setInterval(render, 500); };
 $("pause").onclick = () => {
   if (!st) return;
-  if (st.paused === null) { st.paused = pos(); musicPause(); }
-  else { st.start = Date.now() - st.paused * 1000; st.paused = null; musicPlay(); }
+  if (st.paused === null) { st.paused = pos(); musicPause(); if (voice) voice.pause(); }
+  else { st.start = Date.now() - st.paused * 1000; st.paused = null; musicPlay(); if (voice) voice.play().catch(() => {}); }
   save(); render();
 };
-$("stop").onclick = () => { clearInterval(tick); tick = null; st = null; played = -1; save(); musicPause();
+$("stop").onclick = () => { clearInterval(tick); tick = null; st = null; played = -1; save(); musicPause(); stopVoice();
                             if (music) music.currentTime = 0; render(); };
 $("seek").oninput = () => { dragging = true; if (st) { const [i, into] = phaseAt(+$("seek").value);
                             $("clock").textContent = fmt(P[i].sec - into); $("label").textContent = P[i].label; } };
@@ -269,7 +282,12 @@ $("seek").onchange = () => {
   const v = +$("seek").value;
   if (!st) st = {start: Date.now(), paused: 0};  // moving the slider before Begin starts paused at that point
   if (st.paused !== null) st.paused = v; else st.start = Date.now() - v * 1000;
-  played = phaseAt(v)[0];  // a jump doesn't replay the cue for where you land
+  const [i, into] = phaseAt(v);
+  played = i;
+  stopVoice();
+  seekMusic(v);
+  // Landing near the start of a round picks its cue up from that point; deeper in, the round is already quiet.
+  if (into < 20 && st.paused === null) play(P[i].cue, into);
   save(); render(); if (!tick) tick = setInterval(render, 500);
 };
 if (music) {
