@@ -74,8 +74,18 @@ def acc_per_minute(pid: str) -> pd.DataFrame:
         df = df.withColumn(c, F.expr(f"try_cast(`{c}` AS DOUBLE)"))
 
     def per_hour(pdf: pd.DataFrame) -> pd.DataFrame:
+        # Runs on Spark workers, which can't import bodylab, so this is a self-contained copy of
+        # bodylab.data.loader.acc_minute using only pandas and numpy. Keep the two in sync.
+        import numpy as np
+        import pandas as pd
+
         pdf = pdf.sort_values("datetime")
-        return loader.acc_minute(pdf)[["ts", "enmo_sum", "n", "steps"]]
+        mag = np.sqrt(pdf["acc_x"] ** 2 + pdf["acc_y"] ** 2 + pdf["acc_z"] ** 2) / 64.0  # E4: 1/64 g per unit
+        enmo = np.clip(mag - 1.0, 0, None) * 1000.0
+        hp = mag - mag.rolling(32, center=True, min_periods=1).mean()  # remove the 1-second mean (32 Hz)
+        is_peak = (hp > 0.12) & (hp == hp.rolling(9, center=True, min_periods=1).max())
+        out = pd.DataFrame({"ts": pdf["datetime"].dt.floor("min"), "enmo_sum": enmo, "n": 1, "steps": is_peak.astype(int)})
+        return out.groupby("ts", as_index=False).sum()[["ts", "enmo_sum", "n", "steps"]]
 
     out = (df.withColumn("hour", F.date_trunc("hour", "datetime"))
              .groupBy("hour").applyInPandas(per_hour, schema="ts timestamp, enmo_sum double, n long, steps long")
