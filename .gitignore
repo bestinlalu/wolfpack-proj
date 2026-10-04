@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 lakehouse/
-data/raw/
+data/
 .env
 *.mp3
 .DS_Store

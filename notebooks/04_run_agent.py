@@ -47,50 +47,72 @@ sys.path.insert(0, _repo_root())
 import pandas as pd
 
 from bodylab.agent.investigator import make_investigator
-from bodylab.databricks_io import load_features, load_notebook, read_pid_table, save_state
+from bodylab.agent.notebook import Notebook
+from bodylab.databricks_io import load_notebook, read_pids_table, save_states
 from bodylab.engine import Engine
 
 dbutils.widgets.text("catalog", "workspace")
 dbutils.widgets.text("schema", "body_lab")
-dbutils.widgets.text("pid", "001")
+dbutils.widgets.text("pids", "001,002,004,005,006")
 dbutils.widgets.text("minutes_to_run", "30")
-dbutils.widgets.dropdown("use_gemini", "yes", ["yes", "no"])
-catalog, schema, pid = dbutils.widgets.get("catalog"), dbutils.widgets.get("schema"), dbutils.widgets.get("pid")
+dbutils.widgets.dropdown("use_gemini", "no", ["yes", "no"])
+catalog, schema = dbutils.widgets.get("catalog"), dbutils.widgets.get("schema")
+pids = [p.strip() for p in dbutils.widgets.get("pids").split(",") if p.strip().isalnum()]
 prefix = f"{catalog}.{schema}"
 deadline = time.time() + 60 * float(dbutils.widgets.get("minutes_to_run"))
 
-try:
-    os.environ["GEMINI_API_KEY"] = dbutils.secrets.get("body-lab", "gemini_api_key")
-except Exception:
-    print("No Gemini secret found; using the rule-based investigator.")
+if dbutils.widgets.get("use_gemini") == "yes":
+    try:
+        os.environ["GEMINI_API_KEY"] = dbutils.secrets.get("body-lab", "gemini_api_key")
+    except Exception:
+        print("No Gemini secret found; using the rule-based investigator.")
 investigator = make_investigator(prefer_llm=dbutils.widgets.get("use_gemini") == "yes")
-print("Investigator:", investigator.name)
+print("Investigator:", investigator.name, "| participants:", ", ".join(pids))
 
 # COMMAND ----------
 
-last = None
+# Each participant's lab notebook stays in memory between loops (this notebook is its only writer during a run);
+# Delta is read once at the start and written once per loop for everyone who changed.
+notebooks = {pid: load_notebook(spark, prefix, pid) for pid in pids}
+last: dict[str, pd.Timestamp] = {}
+waiting_shown = False
 while time.time() < deadline:
-    minute = read_pid_table(spark, f"{prefix}.live_minute", pid)
-    meals = read_pid_table(spark, f"{prefix}.live_meals", pid)
-    if minute.empty:
-        time.sleep(5)
-        continue
-    minute = minute.drop_duplicates("ts").sort_values("ts")
-    meals = meals.drop_duplicates("meal_id").sort_values("ts") if not meals.empty else meals
-    until = minute["ts"].max()
-    if last is not None and until <= last:
-        time.sleep(5)
-        continue
-    engine = Engine(pid, minute, meals, load_notebook(spark, prefix, pid), investigator)
-    engine.features = load_features(spark, prefix, pid)
-    out = engine.step(until)
-    save_state(spark, prefix, pid, engine.features, engine.notebook, engine.until, investigator.name)
-    for m in engine.notebook.messages[len(engine.notebook.messages) - out["messages"]:]:
-        print(f"{pd.Timestamp(m['ts']):%a %H:%M} [{m['kind']}] {m['title']}")
-    last = until
+    live = read_pids_table(spark, f"{prefix}.live_minute", pids)
+    live_meals = read_pids_table(spark, f"{prefix}.live_meals", pids)
+    changed = []
+    for pid in pids:
+        minute = live[live["pid"] == pid] if not live.empty else live
+        if minute.empty:
+            if pid in last:  # stream was reset: start this participant over
+                notebooks[pid] = Notebook(pid)
+                del last[pid]
+            continue
+        minute = minute.drop_duplicates("ts").sort_values("ts")
+        meals = live_meals[live_meals["pid"] == pid] if not live_meals.empty else live_meals
+        meals = meals.drop_duplicates("meal_id").sort_values("ts") if not meals.empty else meals
+        until = minute["ts"].max()
+        if pid in last and until < last[pid]:  # stream restarted from the beginning
+            print(f"{pid}: stream restarted, starting this participant's lab over")
+            notebooks[pid] = Notebook(pid)
+        elif pid in last and until == last[pid]:
+            continue
+        engine = Engine(pid, minute, meals, notebooks[pid], investigator)
+        before = len(engine.notebook.messages)
+        engine.step(until)
+        notebooks[pid] = engine.notebook
+        last[pid] = until
+        changed.append((pid, engine.features, engine.notebook, engine.until, investigator.name))
+        for m in engine.notebook.messages[before:]:
+            print(f"{pid} {pd.Timestamp(m['ts']):%a %b %d %H:%M} [{m['kind']}] {m['title']}")
+    if changed:
+        save_states(spark, prefix, changed)
+    elif not last and not waiting_shown:
+        print("Waiting for streamed data (scripts/stream_to_databricks.py or 02/03)...")
+        waiting_shown = True
     time.sleep(5)
-print("Agent loop stopped at", last)
+print("Agent loop stopped at", {pid: str(t) for pid, t in last.items()})
 
 # COMMAND ----------
 
-display(spark.sql(f"SELECT kind, title, body, ts FROM {prefix}.nb_messages WHERE pid = '{pid}' ORDER BY ts DESC"))
+display(spark.sql(f"SELECT pid, kind, title, body, ts FROM {prefix}.nb_messages "
+                  f"WHERE pid IN ({', '.join(repr(p) for p in pids)}) ORDER BY ts DESC"))

@@ -1,4 +1,4 @@
-"""Stream one participant's data from this laptop into Databricks, while 04_run_agent runs there.
+"""Stream participants' data from this laptop into Databricks, while 04_run_agent runs there.
 
 Replaces notebooks 02_replayer and 03_stream_ingest, like a phone uploading wristband data: every few seconds the
 next chunk of per-minute data and meals is inserted into `live_minute` and `live_meals` through the SQL warehouse,
@@ -10,7 +10,8 @@ Data source (--source):
   databricks  the participant's `minute_signals` / `meals` prepared by notebooks/01_prepare_minute
 
     python scripts/stream_to_databricks.py --pid 001
-    python scripts/stream_to_databricks.py --pid 001 --chunk-minutes 120 --no-reset   # faster, keep old results
+    python scripts/stream_to_databricks.py --all                     # everyone in bodylab/users.json, side by side
+    python scripts/stream_to_databricks.py --pid 001 002 --chunk-minutes 120 --no-reset   # faster, keep old results
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from bodylab.store import DatabricksSqlStore, LocalStore  # noqa: E402
+from bodylab.users import load_users  # noqa: E402
 
 RESULT_TABLES = ["features_fuel", "features_stress", "features_sleep", "features_movement", "nb_events",
                  "nb_hypotheses", "nb_evidence", "nb_discoveries", "nb_quests", "nb_messages", "nb_processed",
@@ -108,61 +110,87 @@ class Warehouse:
             return False
 
 
+def load(source: str, pid: str, wh: "Warehouse | None", local: "LocalStore | None") -> tuple[pd.DataFrame, pd.DataFrame]:
+    if source == "local":
+        minute, meals = (naive(df) for df in local.read_inputs(pid))
+    else:
+        minute, meals = wh.read("minute_signals", pid), wh.read("meals", pid)
+    return minute.sort_values("ts").reset_index(drop=True), meals.sort_values("ts").reset_index(drop=True)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--pid", required=True, help="participant to stream, e.g. 001")
+    who = ap.add_mutually_exclusive_group(required=True)
+    who.add_argument("--pid", nargs="+", help="participants to stream, e.g. --pid 001 002")
+    who.add_argument("--all", action="store_true", help="every participant assigned to a user in bodylab/users.json")
     ap.add_argument("--source", choices=["local", "databricks"], default="local", help="where the prepared data is")
     ap.add_argument("--chunk-minutes", type=int, default=60, help="minutes of data per insert")
     ap.add_argument("--seconds", type=float, default=1.0, help="pause between inserts")
-    ap.add_argument("--no-reset", action="store_true", help="keep this participant's earlier live data and results")
+    ap.add_argument("--no-reset", action="store_true", help="keep these participants' earlier live data and results")
     args = ap.parse_args()
-    if not args.pid.isalnum():
-        sys.exit("--pid must be letters and digits, e.g. 001")
+    pids = [u.pid for u in load_users()] if args.all else args.pid
+    if not all(pid.isalnum() for pid in pids):
+        sys.exit("participant ids must be letters and digits, e.g. 001")
 
-    if args.source == "local":
-        local = LocalStore()
-        if args.pid not in local.pids():
-            sys.exit(f"{args.pid} isn't prepared on this laptop. Run scripts/download_data.sh {args.pid} "
-                     f"and then scripts/prepare.py --pid {args.pid} first.")
-        minute, meals = (naive(df) for df in local.read_inputs(args.pid))
+    local = LocalStore() if args.source == "local" else None
+    if local is not None:
+        missing = [pid for pid in pids if pid not in local.pids()]
+        if missing:
+            sys.exit(f"{', '.join(missing)} isn't prepared on this laptop. Run scripts/download_data.sh "
+                     f"{' '.join(missing)} and then scripts/prepare.py " + " ".join(f"--pid {m}" for m in missing) + " first.")
 
     print("Connecting to the Databricks SQL warehouse (it may take up to a minute to wake up)...")
     wh = Warehouse()
     p = wh.prefix
-    if args.source == "databricks":
-        minute, meals = wh.read("minute_signals", args.pid), wh.read("meals", args.pid)
+    data = {}
+    for pid in pids:
+        minute, meals = load(args.source, pid, wh, local)
         if minute.empty:
-            sys.exit(f"No prepared data for {args.pid} in {p}.minute_signals; run 01_prepare_minute first.")
-    minute = minute.sort_values("ts").reset_index(drop=True)
-    meals = meals.sort_values("ts").reset_index(drop=True)
-    print(f"{args.pid} ({args.source}): {len(minute):,} minutes ({minute.ts.min():%b %d} to {minute.ts.max():%b %d}), "
-          f"{len(meals)} meals")
+            print(f"{pid}: no prepared data in Databricks; skipped (run 01_prepare_minute for it)")
+            continue
+        data[pid] = (minute, meals)
+        print(f"{pid} ({args.source}): {len(minute):,} minutes ({minute.ts.min():%b %d} to {minute.ts.max():%b %d}), "
+              f"{len(meals)} meals")
+    if not data:
+        sys.exit("Nothing to stream.")
+    pids = list(data)
+    pid_list = ", ".join(f"'{pid}'" for pid in pids)
 
-    wh.run(create_sql(f"{p}.live_minute", minute))
-    wh.run(create_sql(f"{p}.live_meals", meals))
+    first_minute, first_meals = next(iter(data.values()))
+    wh.run(create_sql(f"{p}.live_minute", first_minute))
+    wh.run(create_sql(f"{p}.live_meals", first_meals))
     if not args.no_reset:
         for table in ["live_minute", "live_meals"] + RESULT_TABLES:
             if wh.exists(table):
-                wh.run(f"DELETE FROM {p}.{table} WHERE pid = '{args.pid}'")
-        print(f"Cleared {args.pid}'s earlier live data and results; the lab starts empty.")
+                wh.run(f"DELETE FROM {p}.{table} WHERE pid IN ({pid_list})")
+        print(f"Cleared earlier live data and results for {', '.join(pids)}; their labs start empty.")
 
+    # Participants were recorded on different dates, so each one advances by the same amount from its own start.
     chunk = pd.Timedelta(minutes=args.chunk_minutes)
-    t, end, last_block = minute["ts"].min(), minute["ts"].max(), -1
-    started = time.time()
-    while t <= end:
-        part = minute[(minute["ts"] >= t) & (minute["ts"] < t + chunk)]
+    starts = {pid: d[0]["ts"].min() for pid, d in data.items()}
+    longest = max(d[0]["ts"].max() - starts[pid] for pid, d in data.items())
+    offset, last_block, started = pd.Timedelta(0), -1, time.time()
+    while offset <= longest:
+        minute_parts, meal_parts = [], []
+        for pid, (minute, meals) in data.items():
+            lo, hi = starts[pid] + offset, starts[pid] + offset + chunk
+            minute_parts.append(minute[(minute["ts"] >= lo) & (minute["ts"] < hi)])
+            meal_parts.append(meals[(meals["ts"] >= lo) & (meals["ts"] < hi)])
+        part = pd.concat(minute_parts, ignore_index=True)
         if len(part):
             wh.run(insert_sql(f"{p}.live_minute", part))
-        m = meals[(meals["ts"] >= t) & (meals["ts"] < t + chunk)]
+        m = pd.concat(meal_parts, ignore_index=True)
         if len(m):
             wh.run(insert_sql(f"{p}.live_meals", m))
-        block = int((t - minute["ts"].min()) / pd.Timedelta(hours=6))  # progress every 6 hours of data
+        block = int(offset / pd.Timedelta(hours=6))  # progress every 6 hours of data
         if block != last_block:
             last_block = block
-            print(f"streamed through {t + chunk:%a %b %d %H:%M}  ({time.time() - started:.0f}s)")
-        t += chunk
+            hours = (offset + chunk) / pd.Timedelta(hours=1)
+            print(f"streamed {hours:.0f} h of data (day {int(hours // 24) + 1}) for {len(pids)} participant(s)  "
+                  f"({time.time() - started:.0f}s)")
+        offset += chunk
         time.sleep(args.seconds)
-    print(f"Done: streamed {args.pid} in {(time.time() - started) / 60:.1f} min.")
+    print(f"Done: streamed {', '.join(pids)} in {(time.time() - started) / 60:.1f} min.")
 
 
 if __name__ == "__main__":

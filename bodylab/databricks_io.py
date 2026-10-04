@@ -54,3 +54,45 @@ def load_notebook(spark, prefix: str, pid: str) -> Notebook:
 
 def load_features(spark, prefix: str, pid: str) -> dict[str, pd.DataFrame]:
     return {lab: read_pid_table(spark, f"{prefix}.features_{lab}", pid) for lab in LABS}
+
+
+# ---- several participants at once (04_run_agent with a list of pids) ----
+
+def _in(pids: list[str]) -> str:
+    return "pid IN (" + ", ".join(f"'{p}'" for p in pids if p.isalnum()) + ")"
+
+
+def write_pids_table(spark, frames: dict[str, pd.DataFrame], table: str) -> None:
+    """Replace the rows of every participant in `frames` with one Delta write (empty frame = delete their rows)."""
+    pids = list(frames)
+    rows = [df.assign(pid=pid) if "pid" not in df.columns else df for pid, df in frames.items() if df is not None and not df.empty]
+    if not rows:
+        if spark.catalog.tableExists(table):
+            spark.sql(f"DELETE FROM {table} WHERE {_in(pids)}")
+        return
+    sdf = spark.createDataFrame(_sanitize(pd.concat(rows, ignore_index=True)))
+    (sdf.write.format("delta").mode("overwrite").option("replaceWhere", _in(pids))
+        .option("mergeSchema", "true").saveAsTable(table))
+
+
+def read_pids_table(spark, table: str, pids: list[str]) -> pd.DataFrame:
+    if not spark.catalog.tableExists(table):
+        return pd.DataFrame()
+    pdf = spark.table(table).where(_in(pids)).toPandas()
+    pdf.attrs = {}
+    return pdf
+
+
+def save_states(spark, prefix: str, results: list[tuple]) -> None:
+    """results: (pid, features, notebook, until, agent) for each participant that changed; one write per table."""
+    if not results:
+        return
+    for lab in LABS:
+        write_pids_table(spark, {pid: feats.get(lab, pd.DataFrame()) for pid, feats, *_ in results}, f"{prefix}.features_{lab}")
+    frames = {pid: nb.to_frames() for pid, _, nb, *_ in results}
+    for name in TABLES:
+        write_pids_table(spark, {pid: f[name] for pid, f in frames.items()}, f"{prefix}.nb_{name}")
+    now = pd.Timestamp.utcnow().tz_localize(None)
+    state = {pid: pd.DataFrame([{"pid": pid, "until": pd.Timestamp(until), "agent": agent, "updated_at": now}])
+             for pid, _, _, until, agent in results}
+    write_pids_table(spark, state, f"{prefix}.agent_state")
