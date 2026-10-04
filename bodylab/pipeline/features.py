@@ -166,6 +166,8 @@ def build_meals(sig: Signals, meals: pd.DataFrame, nights: pd.DataFrame) -> pd.D
             "lab": "fuel", "ts": t, "end_ts": t + win, "meal_id": m["meal_id"], "items": m["items"],
             "carbs": float(m["carbs"]) if pd.notna(m["carbs"]) else np.nan,
             "carbs_missing": bool(m.get("carbs_missing", False)),
+            "source": m.get("source") if pd.notna(m.get("source")) else "log",
+            "confidence": m.get("confidence") if pd.notna(m.get("confidence")) else "",
             "slot": _slot(t),
             "start_glucose": start_g, "peak_glucose": peak,
             "response": peak - start_g if np.isfinite(peak) and np.isfinite(start_g) else np.nan,

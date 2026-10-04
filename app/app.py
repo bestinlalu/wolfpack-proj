@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import sys
+from uuid import uuid4
 from html import escape
 from pathlib import Path
 
@@ -429,26 +430,54 @@ with st.sidebar:
             st.rerun()
 
     with st.expander("Log a meal by photo"):
-        photo = st.file_uploader("Meal photo", type=["jpg", "jpeg", "png", "webp"], key="photo")
+        guess_key = f"meal_guess_{pid}"
+        notice = st.session_state.pop(f"meal_saved_{pid}", None)
+        if notice:
+            st.success(notice)
+        photo = st.file_uploader("Meal photo", type=["jpg", "jpeg", "png", "webp"], key=f"photo_{pid}")
         if photo is not None and st.button("Estimate with Gemini", disabled=not gemini_api_key()):
             try:
-                st.session_state["meal_guess"] = meal_photo.analyze(photo.getvalue(), photo.type or "image/jpeg")
+                guess = meal_photo.analyze(photo.getvalue(), photo.type or "image/jpeg")
+                guess["meal_id"] = f"{pid}-photo-{uuid4().hex}"
+                st.session_state[guess_key] = guess
             except Exception as exc:
                 st.error(f"Could not read the photo: {exc}")
-        guess = st.session_state.get("meal_guess")
+        guess = st.session_state.get(guess_key)
         if guess:
             st.caption(f"Confidence: {guess['confidence']}. Photo carbs are rough, so this meal gets wider comparison ranges.")
             items = ", ".join(f"{f['name']} ({f['portion']})" for f in guess["foods"])
-            carbs = st.number_input("Carbs (g)", value=float(round(guess["carbs_g"])), step=1.0)
+            carbs = st.number_input("Carbs (g)", min_value=0.0, value=float(round(guess["carbs_g"])), step=1.0, key=f'carbs_{guess["meal_id"]}')
             st.write(items)
-            if not store.read_only and st.button("Add to meal log"):
-                minute, meals = store.read_inputs(pid)
-                row = {"pid": pid, "meal_id": f"{pid}-p{len(meals):03d}", "ts": now.floor("min"), "carbs": carbs, "carbs_missing": False,
+            meal_date = st.date_input("Meal date", value=now.date(), min_value=eng.start.date(), max_value=now.date(), key=f'date_{guess["meal_id"]}')
+            meal_time = st.time_input("Meal time", value=now.floor("min").time(), key=f'time_{guess["meal_id"]}')
+            meal_ts = pd.Timestamp.combine(meal_date, meal_time).floor("min")
+            valid_time = eng.start <= meal_ts <= now
+            st.caption("Use the meal's time in the replay. A reviewed photo replaces an existing meal at the same minute.")
+            if not valid_time:
+                st.warning("Choose a meal time within the data already replayed.")
+            elif meal_ts + pd.Timedelta(minutes=120) > now:
+                st.caption("Saved meals need two hours of later glucose readings before they can be tested. Choose an earlier meal time or advance the replay.")
+            if st.button("Add to meal log", disabled=not valid_time):
+                row = {"pid": pid, "meal_id": guess["meal_id"], "ts": meal_ts, "carbs": carbs, "carbs_missing": False,
                        "sugar": guess["sugar_g"], "fiber": guess["fiber_g"], "protein": guess["protein_g"], "fat": guess["fat_g"],
-                       "calories": guess["calories"], "items": items}
-                store.write_inputs(pid, minute, pd.concat([meals, pd.DataFrame([row])], ignore_index=True))
-                st.session_state.pop("meal_guess")
-                st.success("Added at the current replay time.")
+                       "calories": guess["calories"], "items": items, "source": "photo", "confidence": guess["confidence"],
+                       "uploaded_at": pd.Timestamp.now().floor("us")}
+                try:
+                    store.write_meal(pid, row)
+                    _cached_inputs.clear()
+                    _cached_state.clear()
+                    if not store.read_only and eng.until is not None:
+                        minute, meals = store.read_inputs(pid)
+                        refreshed = Engine(pid, minute, meals, investigator=eng.investigator)
+                        refreshed.step(eng.until)
+                        store.write_state(pid, refreshed.features, refreshed.notebook, refreshed.until, refreshed.investigator.name)
+                    st.session_state.pop(guess_key)
+                    st.session_state[f"meal_saved_{pid}"] = ("Saved to Databricks. The running agent will include it on its next check."
+                                                              if store.read_only else "Saved and included in the replay analysis.")
+                except Exception as exc:
+                    st.error(f"Could not save the meal: {exc}")
+                else:
+                    st.rerun()
     st.caption("Sherlock Howls reports what was different, never causes. Not medical advice.")
 
 tab_today, tab_case, tab_disc, tab_nb, tab_chat = st.tabs(["Today", "Cases", "Findings", "Casebook", "💬 Ask Sherlock Howls"])

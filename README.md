@@ -343,7 +343,9 @@ Everything is detected from sensors, so playing takes no extra effort.
 
 No competitive leaderboard: ranking people on health can backfire.
 
-**Meal logging:** the demo uses the dataset's food logs. A side feature shows photo logging: Gemini takes a meal photo and returns foods, portion, carbs, protein, fat, fiber, calories and a confidence level as JSON, and the user confirms with one tap. Photo carbs are treated as rough, so similar-meal ranges are wider for them.
+**Meal logging:** Gemini estimates foods, portions, nutrients, calories and confidence from a photo. Review the carbs and select the meal's time within the replay, then use **Add to meal log** in either local or Databricks mode. Estimates are stored with `source=photo` and confidence in a separate `photo_meals` table (local: `photo_meals.parquet`). The latest reviewed photo takes precedence over a dataset meal at the same participant/minute, avoiding duplicate situations. Replay resets leave uploaded meals intact. Photo comparisons allow a 35 g carb difference instead of the usual 25 g; source/confidence remain available to the investigator.
+
+For Databricks, update and restart `04_run_agent` and run the first setup cell in `00_setup` to create `photo_meals`. The app identity needs `SELECT` and `MODIFY` on that table plus its existing catalog/schema access. If the table is missing, the app attempts to create it and will also need `CREATE TABLE` on the schema. Meal values use [native parameterized SQL](https://docs.databricks.com/aws/en/dev-tools/python-sql-connector). The agent detects meal changes while the replay is paused; changes to previously analyzed meals rebuild that participant's notebook so evidence is not stale or duplicated. A meal only becomes testable after its two-hour glucose window arrives. At the end of a replay, choose an earlier recorded meal time with later sensor data. `05_batch_all` also combines photo meals when rebuilding results. Uploads do not provide new sensor readings.
 
 ### Screens
 
@@ -395,7 +397,7 @@ wolfpack-proj/
 │   ├── agent/investigator.py    # Gemini tool-calling loop + rule-based fallback
 │   ├── agent/notebook.py        # lab notebook, hypothesis lifecycle, cards, quests, rank
 │   ├── engine.py                # processes new situations: tests, lifecycle, investigations
-│   ├── store.py                 # local parquet store; read-only Databricks SQL store for the app
+│   ├── store.py                 # local parquet store; Databricks result reads and photo-meal writes
 │   ├── databricks_io.py         # Delta read/write per participant
 │   ├── voice.py                 # weekly recap text + ElevenLabs speech
 │   └── meal_photo.py            # Gemini meal photo -> JSON meal log

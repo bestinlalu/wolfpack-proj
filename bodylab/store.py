@@ -15,6 +15,7 @@ import pandas as pd
 from bodylab.agent.notebook import TABLES, Notebook
 from bodylab.config import SETTINGS
 from bodylab.labs import LABS
+from bodylab.meal_log import PHOTO_COLUMNS, PHOTO_MEALS_SCHEMA, combine_meals, validate_photo_meal
 
 
 class LocalStore:
@@ -44,7 +45,17 @@ class LocalStore:
         meals.to_parquet(self._p(pid, "meals"), index=False)
 
     def read_inputs(self, pid: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-        return pd.read_parquet(self._p(pid, "minute")), pd.read_parquet(self._p(pid, "meals"))
+        meals = pd.read_parquet(self._p(pid, "meals"))
+        photo_path = self._p(pid, "photo_meals")
+        photos = pd.read_parquet(photo_path) if photo_path.exists() else pd.DataFrame()
+        return pd.read_parquet(self._p(pid, "minute")), combine_meals(meals, photos)
+
+    def write_meal(self, pid: str, row: dict) -> None:
+        row = validate_photo_meal(pid, row)
+        path = self._p(pid, "photo_meals")
+        photos = pd.read_parquet(path) if path.exists() else pd.DataFrame()
+        photos = pd.concat([photos, pd.DataFrame([row])], ignore_index=True)
+        photos.drop_duplicates("meal_id", keep="last").to_parquet(path, index=False)
 
     def write_state(self, pid: str, features: dict[str, pd.DataFrame], notebook: Notebook, until: pd.Timestamp | None, agent: str) -> None:
         for lab, df in features.items():
@@ -76,7 +87,7 @@ class LocalStore:
 
 
 class DatabricksSqlStore:
-    """Read-only view of the Delta tables, for the Databricks App.
+    """Read-only pipeline results plus reviewed photo-meal writes, for the Databricks App.
 
     Needs DATABRICKS_WAREHOUSE_ID (set as an app resource) and BODYLAB_CATALOG / BODYLAB_SCHEMA.
     Authentication uses the app's service principal through the Databricks SDK config.
@@ -94,6 +105,7 @@ class DatabricksSqlStore:
         self._lock = threading.Lock()
         self._idle = [self._connect()]  # small pool, so parallel reads each get their own connection
         self._executor = None
+        self._photo_table_ready = False
 
     @staticmethod
     def _connect():
@@ -107,7 +119,7 @@ class DatabricksSqlStore:
             credentials_provider=lambda: cfg.authenticate,
         )
 
-    def _execute(self, statement: str, fetch: bool):
+    def _execute(self, statement: str, fetch: bool, parameters: dict | None = None):
         """Run one statement on a pooled connection; a dropped session (warehouse slept) gets one reconnect."""
         with self._lock:
             conn = self._idle.pop() if self._idle else None
@@ -116,7 +128,10 @@ class DatabricksSqlStore:
             for attempt in range(2):
                 try:
                     with conn.cursor() as cur:
-                        cur.execute(statement)
+                        if parameters is None:
+                            cur.execute(statement)
+                        else:
+                            cur.execute(statement, parameters=parameters)
                         return cur.fetchall_arrow().to_pandas() if fetch else None
                 except Exception as exc:
                     if attempt or "TABLE_OR_VIEW_NOT_FOUND" in str(exc):  # a missing table is a real answer
@@ -183,8 +198,34 @@ class DatabricksSqlStore:
         return "|".join(f"{p}@{s}" for p, s in sorted(zip(df["pid"], stamp.astype(str))))
 
     def read_inputs(self, pid: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-        minute, meals = self._parallel(lambda t: self._q(t, pid), ["live_minute", "live_meals"])
-        return minute, meals
+        minute, meals, photos = self._parallel(
+            lambda t: self._photo_meals(pid) if t == "photo_meals" else self._q(t, pid),
+            ["live_minute", "live_meals", "photo_meals"])
+        return minute, combine_meals(meals, photos)
+
+    def _photo_meals(self, pid: str) -> pd.DataFrame:
+        try:
+            return self._q("photo_meals", pid)
+        except Exception as exc:
+            if "TABLE_OR_VIEW_NOT_FOUND" in str(exc):
+                return pd.DataFrame()
+            raise
+
+    def write_meal(self, pid: str, row: dict) -> None:
+        row = validate_photo_meal(pid, row)
+        table = f"{self.catalog}.{self.schema}.photo_meals"
+        if not self._photo_table_ready:
+            try:
+                self._execute(f"SELECT meal_id FROM {table} LIMIT 0", fetch=True)
+            except Exception as exc:
+                if "TABLE_OR_VIEW_NOT_FOUND" not in str(exc):
+                    raise
+                self._run(f"CREATE TABLE IF NOT EXISTS {table} ({PHOTO_MEALS_SCHEMA}) USING DELTA")
+            self._photo_table_ready = True
+        select = ", ".join(f"CAST(:{name} AS {('TIMESTAMP' if name in ('ts', 'uploaded_at') else 'BOOLEAN' if name == 'carbs_missing' else 'DOUBLE' if name in ('carbs', 'sugar', 'fiber', 'protein', 'fat', 'calories') else 'STRING')}) AS {name}" for name in PHOTO_COLUMNS)
+        self._execute(f"MERGE INTO {table} t USING (SELECT {select}) s "
+                      "ON t.pid = s.pid AND t.meal_id = s.meal_id "
+                      "WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *", fetch=False, parameters=row)
 
     def read_state(self, pid: str):
         tables = [f"features_{lab}" for lab in LABS] + [f"nb_{name}" for name in TABLES] + ["agent_state"]

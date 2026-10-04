@@ -67,7 +67,8 @@ def describe(lab: str, row: pd.Series, ctx: ToolContext | None = None) -> dict:
             "response_label": LABS[lab].response_label, "unit": unit,
             "response_text": say(row["response"]), "usual_text": say(row.get("expected"))}
     if lab == "fuel":
-        base.update(items=row["items"], carbs=_num(row["carbs"]), slot=row["slot"])
+        base.update(items=row["items"], carbs=_num(row["carbs"]), slot=row["slot"],
+                    source=row.get("source", "log"), confidence=row.get("confidence", ""))
     if lab == "movement":
         base.update(duration_min=int(row["duration_min"]), cadence=_num(row["cadence"]))
     if lab == "sleep":
@@ -86,8 +87,10 @@ def check_data_quality(ctx: ToolContext, situation_id: str) -> dict:
 def _similarity(lab: str, ev: pd.Series, cand: pd.DataFrame) -> pd.Series:
     if lab == "fuel":
         d = (cand["carbs"] - ev["carbs"]).abs()
+        photo = cand.get("source", pd.Series("log", index=cand.index)).eq("photo") | (ev.get("source") == "photo")
+        tolerance = pd.Series(np.where(photo, 35.0, 25.0), index=cand.index)
         score = d / 20 + (cand["slot"] != ev["slot"]) * 1.0 + (cand["hour"] - ev["hour"]).abs() / 6
-        return score.where(d <= 25)
+        return score.where(d <= tolerance)
     if lab == "movement":
         d = (cand["cadence"] - ev["cadence"]).abs()
         score = d / 10 + (cand["duration_min"] - ev["duration_min"]).abs() / 15
