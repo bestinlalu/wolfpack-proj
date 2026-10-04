@@ -11,6 +11,8 @@ Built at **WolfHacks (ACM at NC State)** for the **Applied AI Software (Databric
 
 The web app uses a detective case desk theme: Today’s daily briefing, Cases, Findings, and a Casebook with dated evidence logs. Hypothesis statuses remain Possible link, Confirmed, Mixed evidence, and Denied.
 
+**Sherlock's celebrity-inspired leads:** click the wolf PNG at the bottom right to choose a case inspired by Messi, Serena Williams, Ronaldo, Simone Biles, Michael Phelps, Roger Federer, Rafael Nadal, or Virat Kohli. These are curated challenges, not reports about the athletes' actual health data. Targets come from the participant's recorded steps, sleep, or walk timing; at least three recorded situations are required. Investigate adds an optional quest to Today, and three new qualifying observations complete it without confirming a health claim. No Gemini key is needed. Minimize Sherlock with Later and restore him with Show Sherlock in the sidebar. Quests are stored per participant under `lakehouse/celebrity_quests/` (or `BODYLAB_LAKEHOUSE`); Databricks mode still reads its pipeline tables without writing to them. Local quest files need persistent disk to survive a deployment replacement.
+
 **Quick start (local, no API keys needed):**
 
 ```bash

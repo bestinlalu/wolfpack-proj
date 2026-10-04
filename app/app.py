@@ -1,6 +1,7 @@
 """Sherlock Howls web app (Streamlit). Run locally with `streamlit run app/app.py`, or as a Databricks App."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -14,7 +15,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from bodylab import meal_photo, voice  # noqa: E402
+from bodylab import celebrity_cases, meal_photo, voice  # noqa: E402
 from bodylab import patterns  # noqa: E402
 from bodylab.agent.investigator import make_investigator  # noqa: E402
 from bodylab.agent.chat import BodyLabChat  # noqa: E402
@@ -109,6 +110,71 @@ def quest_body(q: dict) -> str:
     return (badges + f'<div class="bl-title">{escape(q["title"])}</div>'
             f'<div class="pattern-evidence"><span class="dots">{dots}</span>'
             f'<span class="bl-sub">{q["progress"]} of {q["target"]}</span></div>')
+
+
+def celebrity_quest_body(q: dict) -> str:
+    badges = pill("Celebrity-inspired case", "p-plain")
+    badges += pill("Completed" if q["done"] else "Tracking automatically", "p-ok" if q["done"] else "p-acc")
+    dots = ''.join(f'<i class="{"s" if i < q["progress"] else ""}"></i>' for i in range(q["target"]))
+    return (badges + f'<div class="bl-title">{escape(q["celebrity"])} · {escape(q["theme"])}</div>'
+            f'<div class="bl-sub">{escape(q["question"])}</div>'
+            f'<div class="bl-sub" style="margin-top:6px">{escape(q["target_text"])}</div>'
+            f'<div class="pattern-evidence"><span class="dots">{dots}</span><span class="bl-sub">{q["progress"]} of {q["target"]} observations</span></div>'
+            + ('<div class="bl-sub" style="margin-top:8px">Observations collected. Check the Casebook for tested patterns; completing a quest does not confirm this link.</div>' if q["done"] else ''))
+
+
+def sherlock_leads(quests: list[dict], now: pd.Timestamp) -> None:
+    visible_key = f"sherlock_visible_{pid}"
+    if visible_key not in st.session_state:
+        st.session_state[visible_key] = True
+    with st.sidebar:
+        visible = st.checkbox("Show Sherlock", key=visible_key)
+    if not visible:
+        return
+    asset = Path(__file__).parent / "assets" / "sherlock.png"
+    png = base64.b64encode(asset.read_bytes()).decode("ascii")
+    st.markdown(f'''<style>
+        .st-key-sherlock-mascot {{ position:fixed; right:24px; bottom:18px; width:130px; z-index:1000; }}
+        .st-key-sherlock-mascot button {{ background:transparent url("data:image/png;base64,{png}") center top / 290px auto no-repeat;
+            height:190px; width:130px; padding:165px 0 0; border:0; color:var(--ink); font-weight:600; box-shadow:none; }}
+        .st-key-sherlock-mascot button:hover {{ color:var(--acc); }}
+        .st-key-sherlock-mascot button:focus-visible {{ outline:2px solid var(--acc); outline-offset:3px; }}
+        [data-testid="stPopoverBody"]:has(#a-lead-from-sherlock) {{ width:380px !important; min-width:0 !important; max-width:calc(100vw - 24px) !important; }}
+        @media (max-width:640px) {{ .st-key-sherlock-mascot {{ right:10px; bottom:12px; }} }}
+        </style>''', unsafe_allow_html=True)
+    with st.container(key="sherlock-mascot"):
+        with st.popover("New lead", help="Open Sherlock's celebrity-inspired cases"):
+            st.markdown("### A lead from Sherlock")
+            notice = st.session_state.pop(f"celebrity_notice_{pid}", None)
+            if notice:
+                st.success(notice)
+            available = [lead for lead in celebrity_cases.suggest(celebrity_features, now)
+                         if not any(q["case_id"] == lead["case_id"] for q in quests)]
+            if available:
+                lead = st.selectbox("Celebrity-inspired case", available,
+                                    format_func=lambda lead: f'{lead["celebrity"]} · {lead["theme"]}', key=f"celebrity_lead_{pid}")
+                st.write(f'The {lead["celebrity"]} case: {lead["question"]} Let’s investigate.')
+                st.markdown(f'**Your target:** {lead["target_text"]}')
+                st.caption(lead["basis"] + " I'll watch three new situations in your replay.")
+                if eng.until is not None and now >= eng.end:
+                    st.caption("This replay has ended. Start a new replay after accepting to collect new observations.")
+                if st.button("Investigate", key=f"accept_celebrity_{pid}", type="primary"):
+                    celebrity_cases.accept(quests, lead, now)
+                    persist_celebrity_quests(quests)
+                    st.session_state[f"celebrity_notice_{pid}"] = f'{lead["celebrity"]} case added to your quests on Today.'
+                    st.rerun()
+            else:
+                st.write("No new leads currently. Sherlock needs at least three recorded situations to tailor a case.")
+            st.caption("Inspired challenges, based on your data. Findings are tested separately in the Casebook.")
+            st.button("Later · minimize Sherlock", key=f"hide_sherlock_{pid}",
+                      on_click=lambda: st.session_state.update({visible_key: False}))
+
+
+def persist_celebrity_quests(quests: list[dict]) -> None:
+    try:
+        celebrity_cases.save(pid, quests)
+    except OSError:
+        st.warning("Quest saved for this session. Local storage is unavailable, so it may not survive a restart.")
 
 
 def pattern_body(h: dict, *, show_name: bool = False, update: dict | None = None) -> str:
@@ -314,6 +380,22 @@ if eng.minute.empty or pd.isna(eng.start):
     st.stop()
 nb = eng.notebook
 now = eng.until or eng.start
+celebrity_key = f"celebrity_quests_{pid}"
+if celebrity_key not in st.session_state:
+    try:
+        st.session_state[celebrity_key] = celebrity_cases.load(pid)
+    except (OSError, ValueError):
+        st.session_state[celebrity_key] = []
+        st.warning("Saved celebrity quests could not be loaded. New quests will be tracked in this session.")
+celebrity_quests = st.session_state[celebrity_key]
+bad_situations = {p["sid"] for p in nb.processed if not p.get("good_data", True)}
+celebrity_features = {lab: df[~df["sid"].isin(bad_situations)] if "sid" in df else df
+                      for lab, df in eng.features.items()}
+previous_quests = json.dumps(celebrity_quests)
+celebrity_cases.update(celebrity_quests, celebrity_features, now)
+if json.dumps(celebrity_quests) != previous_quests:
+    persist_celebrity_quests(celebrity_quests)
+sherlock_leads(celebrity_quests, now)
 
 with st.sidebar:
     st.markdown("#### Replay")
@@ -378,7 +460,10 @@ if eng.until is None:
                     "Use the replay controls on the left to stream it through the agent.")
         _, quest_area = st.columns([3, 2], gap="large")
         with quest_area:
-            card('<div class="bl-label">Quests · optional</div><div class="bl-sub">No quests currently</div>')
+            if not celebrity_quests:
+                card('<div class="bl-label">Quests · optional</div><div class="bl-sub">No quests currently</div>')
+            for q in celebrity_quests:
+                card('<div class="bl-label">Quest · optional</div>' + celebrity_quest_body(q))
     for tab in (tab_case, tab_disc, tab_nb, tab_chat):
         with tab:
             st.caption("Start the replay to open your casebook.")
@@ -441,10 +526,12 @@ with tab_today:
         width = 100 if not nxt else int(pts / nxt * 100)
         card(f'<div class="bl-label">Detective rank</div><div class="bl-big">{escape(rank)}</div>'
              f'<div class="bl-sub bl-num">{pts} points · {to_next}</div><div class="bar"><i style="width:{width}%;background:var(--acc)"></i></div>')
-        if not nb.quests:
+        if not nb.quests and not celebrity_quests:
             card('<div class="bl-label">Quests · optional</div><div class="bl-sub">No quests currently</div>')
         for q in nb.quests[-2:]:
             card('<div class="bl-label">Quest · optional</div>' + quest_body(q))
+        for q in celebrity_quests:
+            card('<div class="bl-label">Quest · optional</div>' + celebrity_quest_body(q))
         st.markdown('<div class="bl-label">Your labs</div>', unsafe_allow_html=True)
         lab_cards = []
         for lab in LABS.values():
