@@ -61,6 +61,9 @@ if dbutils.widgets.get("reset") == "yes":
 
 minute = read_pid_table(spark, f"{prefix}.minute_signals", pid).sort_values("ts")
 meals = read_pid_table(spark, f"{prefix}.meals", pid).sort_values("ts")
+# Serverless toPandas() leaves PlanMetrics in .attrs, which to_parquet cannot save; clear them here too in case
+# this session imported an older bodylab (restart Python after pulling to load new code).
+minute.attrs, meals.attrs = {}, {}
 for sub in ("minute", "meals"):
     os.makedirs(f"{stream}/{sub}/{pid}", exist_ok=True)
 
@@ -74,9 +77,11 @@ i = 0
 while t <= end:
     part = minute[(minute["ts"] >= t) & (minute["ts"] < t + chunk)]
     if len(part):
+        part.attrs = {}
         part.to_parquet(f"{stream}/minute/{pid}/run{run_id}_part_{i:05d}.parquet", index=False)
     m = meals[(meals["ts"] >= t) & (meals["ts"] < t + chunk)]
     if len(m):
+        m.attrs = {}
         m.to_parquet(f"{stream}/meals/{pid}/run{run_id}_part_{i:05d}.parquet", index=False)
     if i % 48 == 0:
         print(f"replayed through {t + chunk:%a %b %d %H:%M}")
