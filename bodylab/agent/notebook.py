@@ -294,6 +294,28 @@ class Notebook:
             st = by_h[d["hyp_id"]]["status"]
             d["status"] = st if st in ("confirmed", "fading", "rejected") else d["status"]
 
+    def derived_quests(self, features: dict[str, pd.DataFrame], now: pd.Timestamp) -> list[dict]:
+        """Quests for every idea being tested or found, rebuilt from the notebook and the features, with progress
+        counted from situations since each idea opened. Lets the app show quests even if the running agent's saved
+        quests are missing or older; quests the agent saved win for the same tracked factor."""
+        scratch = Notebook(self.pid, quests=[dict(q) for q in self.quests])
+        known = {(q["lab"], q["feature"]) for q in scratch.quests}
+        ideas = [h for h in self.hypotheses if h["status"] in ("testing", "fading", "confirmed") and pd.notna(h.get("opened_at"))]
+        for h in sorted(ideas, key=lambda h: pd.Timestamp(h["opened_at"])):
+            df = features.get(h["lab"], pd.DataFrame())
+            if df.empty or "ts" not in df:
+                continue
+            opened = pd.Timestamp(h["opened_at"])
+            q = scratch.add_quest(h["lab"], h["factor"], int(h["direction"]), df, opened)
+            if q is None or (q["lab"], q["feature"]) in known:
+                continue
+            later = df[(df["ts"] > opened) & (df["ts"] <= now)]
+            v = pd.to_numeric(later[q["feature"]], errors="coerce") if q["feature"] in later else pd.Series(dtype=float)
+            hit = (v >= q["threshold"]) if q["op"] == ">=" else (v <= q["threshold"])
+            q["progress"] = int(min(hit.fillna(False).sum(), q["target"]))
+            q["done"] = q["progress"] >= q["target"]
+        return scratch.quests
+
     def update_quests(self, lab: str, situation: pd.Series) -> None:
         for q in self.quests:
             if q["done"] or q["lab"] != lab or situation["ts"] < pd.Timestamp(q["started_at"]):

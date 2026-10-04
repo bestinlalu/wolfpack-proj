@@ -32,14 +32,37 @@ def _top(values: pd.Series, q: float) -> pd.Series:
     return values >= cut if q > 0.5 else values <= cut
 
 
+def merge_meals(meals: pd.DataFrame, window_min: int = 120) -> pd.DataFrame:
+    """Food logged within `window_min` of the start of a meal joins that meal (carbs and nutrients add up), so one
+    eating session isn't split into overlapping meals that the agent has to set aside."""
+    if meals.empty:
+        return meals
+    m = meals.sort_values("ts").reset_index(drop=True)
+    group, start = [], None
+    for t in m["ts"]:
+        if start is None or t - start > pd.Timedelta(minutes=window_min):
+            start = t
+        group.append(start)
+    m["_group"] = group
+    numeric = [c for c in ("carbs", "sugar", "fiber", "protein", "fat", "calories") if c in m]
+    agg = {c: "first" for c in m.columns if c not in ("_group", *numeric)}
+    agg.update({c: (lambda s: s.sum(min_count=1)) for c in numeric})
+    if "items" in m:
+        agg["items"] = lambda s: ", ".join(str(x) for x in s if isinstance(x, str) and x)
+    if "carbs_missing" in m:
+        agg["carbs_missing"] = "all"
+    out = m.groupby("_group", sort=True).agg(agg).reset_index(drop=True)
+    return out[[c for c in meals.columns]]
+
+
 def _rank(values: pd.Series) -> pd.Series:
     """0 for this person's lowest value, 1 for the highest (missing values sit in the middle)."""
     return values.rank(pct=True).fillna(0.5)
 
 
-def augment(minute: pd.DataFrame, meals: pd.DataFrame, seed: int = 0) -> pd.DataFrame:
+def augment(minute: pd.DataFrame, meals: pd.DataFrame, seed: int = 0, boost: float = 1.0, keep: float = KEEP) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
-    strength = rng.uniform(0.85, 1.15)  # people differ a little in how strong each pattern is
+    strength = rng.uniform(0.85, 1.15) * boost  # people differ a little in how strong each pattern is
     m = minute.sort_values("ts").reset_index(drop=True).copy()
     until = m["ts"].max()
     sig = F.Signals(m, until)
@@ -82,7 +105,7 @@ def augment(minute: pd.DataFrame, meals: pd.DataFrame, seed: int = 0) -> pd.Data
         usual = walks0["response"].median()
         for _, w in walks0.iterrows():
             a, b = idx(w["ts"]), min(idx(w["end_ts"]), n)
-            hr[a:b] -= (1 - KEEP) * (w["response"] - usual)
+            hr[a:b] -= (1 - keep) * (w["response"] - usual)
     fuel0 = F.build_meals(sig, meals, nights0).dropna(subset=["start_glucose", "response"])
     if len(fuel0) >= 6:
         usual_rise = fuel0.groupby("slot")["response"].transform(lambda r: max(r.median(), 8.0))
@@ -91,7 +114,7 @@ def augment(minute: pd.DataFrame, meals: pd.DataFrame, seed: int = 0) -> pd.Data
             rise = meal["response"]
             if rise < 3:
                 continue
-            k = float(np.clip((KEEP * rise + (1 - KEEP) * usual_rise[i]) / rise, 0.4, 2.5))
+            k = float(np.clip((keep * rise + (1 - keep) * usual_rise[i]) / rise, 0.4, 2.5))
             a = idx(meal["ts"])
             ramp = np.concatenate([np.full(win, k), np.linspace(k, 1.0, 60)])
             b = min(a + len(ramp), n)
@@ -104,7 +127,7 @@ def augment(minute: pd.DataFrame, meals: pd.DataFrame, seed: int = 0) -> pd.Data
         dev = blocks0["response"] - blocks0.groupby("hour")["response"].transform("median")
         for i, blk in blocks0.iterrows():
             a, b = idx(blk["ts"]), min(idx(blk["end_ts"]), n)
-            eda[a:b] -= (1 - KEEP) * dev[i] * 2 * scale0  # the stress index averages EDA and heart rate
+            eda[a:b] -= (1 - keep) * dev[i] * 2 * scale0  # the stress index averages EDA and heart rate
     m["hr"], m["glucose"], m["eda"] = hr, glucose, eda
     sig = F.Signals(m, until)
 
