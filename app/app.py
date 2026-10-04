@@ -129,7 +129,8 @@ def sherlock_leads(quests: list[dict], now: pd.Timestamp) -> None:
         st.session_state[visible_key] = True
     with st.sidebar:
         visible = st.checkbox("Show Sherlock", key=visible_key)
-    if not visible:
+    related = celebrity_cases.suggest(celebrity_features, now, nb.hypotheses)
+    if not visible or not related:
         return
     asset = Path(__file__).parent / "assets" / "sherlock.png"
     png = base64.b64encode(asset.read_bytes()).decode("ascii")
@@ -148,11 +149,10 @@ def sherlock_leads(quests: list[dict], now: pd.Timestamp) -> None:
             notice = st.session_state.pop(f"celebrity_notice_{pid}", None)
             if notice:
                 st.success(notice)
-            available = [lead for lead in celebrity_cases.suggest(celebrity_features, now)
-                         if not any(q["case_id"] == lead["case_id"] for q in quests)]
+            available = celebrity_cases.suggest(celebrity_features, now, nb.hypotheses, quests)
             if available:
-                lead = st.selectbox("Celebrity-inspired case", available,
-                                    format_func=lambda lead: f'{lead["celebrity"]} · {lead["theme"]}', key=f"celebrity_lead_{pid}")
+                lead = available[0]
+                st.caption(f'Celebrity-inspired case · {lead["hyp_id"]}')
                 st.write(f'The {lead["celebrity"]} case: {lead["question"]} Let’s investigate.')
                 st.markdown(f'**Your target:** {lead["target_text"]}')
                 st.caption(lead["basis"] + " I'll watch three new situations in your replay.")
@@ -164,7 +164,7 @@ def sherlock_leads(quests: list[dict], now: pd.Timestamp) -> None:
                     st.session_state[f"celebrity_notice_{pid}"] = f'{lead["celebrity"]} case added to your quests on Today.'
                     st.rerun()
             else:
-                st.write("No new leads currently. Sherlock needs at least three recorded situations to tailor a case.")
+                st.write("No further leads currently. Your relevant cases are already in quests.")
             st.caption("Inspired challenges, based on your data. Findings are tested separately in the Casebook.")
             st.button("Later · minimize Sherlock", key=f"hide_sherlock_{pid}",
                       on_click=lambda: st.session_state.update({visible_key: False}))

@@ -18,17 +18,35 @@ CASES = (
     ("serena", "Serena Williams", "movement", "prev_sleep_h", ">=", "sleep and movement", "Does a longer night's sleep go with a lower walk heart rate?"),
     ("ronaldo", "Cristiano Ronaldo", "sleep", "late_steps", "<=", "evening activity", "Do quieter evenings go with earlier sleep?"),
     ("biles", "Simone Biles", "stress", "prev_sleep_h", ">=", "rest and stress", "Does a longer night's sleep go with less daytime stress?"),
-    ("phelps", "Michael Phelps", "movement", "prev_sleep_h", ">=", "recovery", "Does a longer night's sleep go with a lower walk heart rate?"),
+    ("phelps", "Michael Phelps", "fuel", "prev_sleep_h", ">=", "sleep and meals", "Does a longer night's sleep go with a smaller glucose rise?"),
     ("federer", "Roger Federer", "fuel", "steps_before", ">=", "pre-meal movement", "Do meals with more walking beforehand go with a smaller glucose rise?"),
     ("nadal", "Rafael Nadal", "movement", "hour", ">=", "walk timing", "Do later walks go with a lower walk heart rate?"),
-    ("kohli", "Virat Kohli", "fuel", "steps_before", ">=", "meal-time movement", "Do meals with more walking beforehand go with a smaller glucose rise?"),
+    ("kohli", "Virat Kohli", "sleep", "dinner_gap_h", ">=", "dinner timing", "Does a longer gap between dinner and bed go with earlier sleep?"),
 )
 
+CASE_DIRECTIONS = {key: (1 if key == "ronaldo" else -1) for key, *_ in CASES}
 
-def suggest(features: dict[str, pd.DataFrame], now: pd.Timestamp) -> list[dict]:
+
+def _same_investigation(q: dict, h: dict) -> bool:
+    if q.get("hyp_id") == h["hyp_id"]:
+        return True
+    # Also recognize quests saved before hypotheses were attached to leads.
+    return (q.get("lab") == h["lab"] and q.get("feature") == h["factor"]
+            and q.get("direction", CASE_DIRECTIONS.get(q.get("case_id"))) == h["direction"])
+
+
+def suggest(features: dict[str, pd.DataFrame], now: pd.Timestamp,
+            hypotheses: list[dict], quests: list[dict] = ()) -> list[dict]:
     """Use recorded situations only; no guessed distance or universal target."""
     leads = []
     for key, celebrity, lab, feature, op, theme, question in CASES:
+        matching = [h for h in hypotheses if h["status"] in ("testing", "fading")
+                    and h["lab"] == lab and h["factor"] == feature
+                    and h["direction"] == CASE_DIRECTIONS[key]
+                    and (pd.isna(h.get("opened_at")) or pd.Timestamp(h["opened_at"]) <= now)]
+        if not matching or any(_same_investigation(q, h) for q in quests for h in matching):
+            continue
+        hypothesis = matching[0]
         df = features.get(lab, pd.DataFrame())
         if df.empty or feature not in df or "end_ts" not in df:
             continue
@@ -48,17 +66,21 @@ def suggest(features: dict[str, pd.DataFrame], now: pd.Timestamp) -> list[dict]:
             target += {"steps_before": "in the hour before a meal", "steps_after": "in the hour after a meal", "late_steps": "after 21:00"}[feature]
         elif feature == "prev_sleep_h":
             target = f"Observe situations after at least {threshold:.1f} hours of recorded sleep"
+        elif feature == "dinner_gap_h":
+            target = f"Observe nights with at least {threshold:.1f} hours between dinner and sleep"
         else:
             hour, minute = divmod(round(threshold * 60), 60)
             target = f"Observe walks starting at or after {hour:02d}:{minute:02d}"
         leads.append(dict(case_id=key, celebrity=celebrity, lab=lab, feature=feature, op=op,
+                          hyp_id=hypothesis["hyp_id"], direction=CASE_DIRECTIONS[key],
                           threshold=threshold, theme=theme, question=question, target_text=target,
                           basis=f"Based on the median of {len(values)} recorded situations."))
     return leads
 
 
 def accept(quests: list[dict], lead: dict, now: pd.Timestamp) -> bool:
-    if any(q["case_id"] == lead["case_id"] for q in quests):
+    hypothesis = dict(hyp_id=lead["hyp_id"], lab=lead["lab"], factor=lead["feature"], direction=lead["direction"])
+    if any(_same_investigation(q, hypothesis) for q in quests):
         return False
     quests.append({**lead, "started_at": now.isoformat(), "target": 3, "progress": 0,
                    "done": False, "observations": []})
