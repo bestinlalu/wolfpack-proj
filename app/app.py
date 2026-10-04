@@ -1,4 +1,4 @@
-"""Body Lab web app (Streamlit). Run locally with `streamlit run app/app.py`, or as a Databricks App."""
+"""Sherlock Howls web app (Streamlit). Run locally with `streamlit run app/app.py`, or as a Databricks App."""
 from __future__ import annotations
 
 import json
@@ -26,18 +26,36 @@ from bodylab.store import open_store  # noqa: E402
 from bodylab.stress_scale import EXPLAINER, band  # noqa: E402
 from bodylab.users import authenticate, find_by_email, load_users, password_required  # noqa: E402
 
-st.set_page_config(page_title="Body Lab", page_icon="🧪", layout="wide")
+st.set_page_config(page_title="Sherlock Howls", page_icon="🐺", layout="wide")
 
-INK, INK3, GLU, ACC, OK = "#13262b", "#82918e", "#d4532a", "#2b55c9", "#2c8556"
+INK, INK3, GLU, ACC, OK = "#262321", "#756b61", "#b83a32", "#b5121b", "#2c8556"
 
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
-:root { --ink:#13262b; --ink2:#4b5d61; --ink3:#82918e; --line:rgba(19,38,43,.12); --card:#fff; --sunk:#f4f7f6;
-  --acc:#2b55c9; --accs:#e5ebfb; --glu:#d4532a; --glus:#fbe6dd; --ok:#2c8556; --oks:#e0f1e7; --warn:#a86c12; --warns:#f8ecd6; --gold:#9a6d05; --golds:#f7edcf; }
+:root { --ink:#262321; --ink2:#574e46; --ink3:#756b61; --line:rgba(69,50,35,.16); --card:#fffdf8; --sunk:#eee7dc;
+  --acc:#b5121b; --accs:#f8e3e3; --glu:#b83a32; --glus:#fbe6dd; --ok:#2c8556; --oks:#e0f1e7; --warn:#a86c12; --warns:#f8ecd6; --gold:#9a6d05; --golds:#f7edcf; }
+[data-testid="stAppViewContainer"] { background:#f5f0e7; color:var(--ink); }
+[data-testid="stSidebar"] { background:#eee7dc; border-right:1px solid var(--line); }
+[data-testid="stHeader"] { background:transparent; }
+[data-testid="stTabs"] [role="tablist"] { border-bottom:1px solid var(--line); }
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] { color:var(--acc); }
+[data-testid="stExpander"] { background:transparent; }
+[data-testid="stExpander"] details { background:var(--card); border-color:var(--line); border-radius:12px; overflow:hidden; }
+.sh-brand { display:flex; gap:12px; align-items:center; margin-bottom:20px; }
+.sh-brand svg { width:48px; height:48px; flex-shrink:0; }
+.sh-brand-name { font-family:'Bricolage Grotesque',system-ui,sans-serif; font-weight:700; font-size:23px; letter-spacing:-.03em; line-height:1.1; }
+.sh-tagline { font-size:12px; color:var(--ink2); margin-top:5px; }
+.case-number { font:11px 'IBM Plex Mono',monospace; color:var(--ink3); letter-spacing:.06em; margin-bottom:8px; }
 html, body, [class*="css"] { font-family: 'IBM Plex Sans', system-ui, sans-serif; }
 h1, h2, h3 { font-family: 'Bricolage Grotesque', system-ui, sans-serif !important; letter-spacing: -0.015em; }
-.bl-card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; margin-bottom: 12px; color: var(--ink); }
+.bl-card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; margin-bottom: 12px; color: var(--ink); box-shadow:0 2px 3px rgba(69,50,35,.035); }
+.bl-card.case-file { border-top:3px solid var(--ink3); }
+.lab-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-rows:1fr; gap:12px; margin-bottom:16px; }
+.lab-grid .bl-card { display:flex; flex-direction:column; margin:0; min-width:0; }
+.lab-details { min-height:40px; margin-bottom:10px; }
+.lab-badges { display:flex; flex-wrap:wrap; gap:4px; margin-top:auto; }
+.lab-badges .pill { margin-right:0; }
 .bl-card.glu { border: 1.5px solid var(--glu); } .bl-card.ok { border: 1.5px solid var(--ok); } .bl-card.acc { border: 1.5px solid var(--acc); }
 .bl-card.gold { border: 1.5px solid var(--gold); } .bl-card.fading { opacity: .7; } .bl-card.locked { border: 1.5px dashed var(--line); background: transparent; color: var(--ink3); }
 .bl-label { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink3); margin-bottom: 6px; }
@@ -71,6 +89,18 @@ def pill(text: str, cls: str) -> str:
     return f'<span class="pill {cls}">{escape(text)}</span>'
 
 
+def brand() -> None:
+    # A code-native wolf mark inside a magnifying glass; no external image dependency.
+    st.markdown('''<div class="sh-brand"><svg viewBox="0 0 64 64" role="img" aria-label="Wolf detective logo">
+        <circle cx="27" cy="27" r="21" fill="#fffdf8" stroke="#b5121b" stroke-width="4"/>
+        <path d="M43 43 L58 58" stroke="#262321" stroke-width="7" stroke-linecap="round"/>
+        <path d="M13 15 L22 20 L32 20 L41 15 L38 32 L27 40 L16 32 Z" fill="#262321"/>
+        <path d="M18 26 L24 28 L20 30 M36 26 L30 28 L34 30" fill="#fffdf8"/>
+        <path d="M24 33 L30 33 L27 36 Z" fill="#fffdf8"/>
+        </svg><div><div class="sh-brand-name">Sherlock Howls</div>
+        <div class="sh-tagline">Your body leaves clues.</div></div></div>''', unsafe_allow_html=True)
+
+
 def quest_body(q: dict) -> str:
     badges = pill(LABS[q["lab"]].name, LAB_PILL[q["lab"]])
     badges += pill("Completed" if q["done"] else "Tracking automatically", "p-ok" if q["done"] else "p-acc")
@@ -90,7 +120,8 @@ def pattern_body(h: dict, *, show_name: bool = False, update: dict | None = None
         wording = patterns.statement(h)
     title = patterns.name(h) if show_name else wording
     timestamp = f'<div class="bl-label" style="float:right">{pd.Timestamp(update["ts"]):%a %H:%M}</div>' if update else ""
-    body = timestamp + badges + f'<div class="bl-title">{escape(title)}</div>'
+    body = (f'<div class="case-number">CASE FILE · {escape(str(h["hyp_id"]))}</div>'
+            + timestamp + badges + f'<div class="bl-title">{escape(title)}</div>')
     if show_name:
         body += f'<div class="bl-sub">{escape(wording)}</div>'
     reason = patterns.origin(h, nb.events)
@@ -113,6 +144,17 @@ def pattern_body(h: dict, *, show_name: bool = False, update: dict | None = None
     body += (f'<div class="pattern-evidence"><span class="dots">{dots}</span>'
              f'<span class="bl-sub">{h["supports"]} matched</span></div>')
     return body
+
+
+def case_file(h: dict) -> None:
+    card(pattern_body(h), "case-file")
+    with st.expander(f'Evidence log · {h["hyp_id"]}'):
+        entries = [e for e in nb.evidence if e["hyp_id"] == h["hyp_id"]]
+        if not entries:
+            st.caption("No comparisons recorded yet.")
+        for e in sorted(entries, key=lambda e: pd.Timestamp(e["ts"])):
+            label = {"supports": "Matched", "contradicts": "Didn't match", "neutral": "No clear result"}.get(e["verdict"], "No clear result")
+            st.write(f'{pd.Timestamp(e["ts"]):%a %b %d, %H:%M} · {label}')
 
 
 def _level(v) -> int | None:
@@ -178,7 +220,7 @@ read_state = (lambda p: _cached_state(store, p)) if store.read_only else store.r
 
 pids = read_pids()
 if not pids:
-    st.title("Body Lab")
+    st.title("Sherlock Howls")
     if store.read_only:
         st.info("No results in Databricks yet. Run the `05_batch_all` notebook (or the streaming notebooks), "
                 "then press Refresh.")
@@ -192,7 +234,7 @@ if not pids:
 
 users = [u for u in load_users() if u.pid in pids]
 if not users:
-    st.title("Body Lab")
+    st.title("Sherlock Howls")
     st.info("No user in bodylab/users.json has prepared data yet. Prepare a participant listed there, "
             "for example `python scripts/prepare.py --pid 001`.")
     st.stop()
@@ -206,10 +248,10 @@ if st.session_state.get("username") not in {u.username for u in users}:
 if "username" not in st.session_state:
     _, middle, _ = st.columns([1, 2, 1])
     with middle:
-        st.markdown("# 🧪 Body Lab")
-        st.markdown("Your personal body scientist. Sign in to see your lab.")
+        brand()
+        st.markdown("Your personal body detective. Sign in to open your casebook.")
         if not password_required():
-            st.error("Login is not configured. Set BODYLAB_DEMO_PASSWORD in .env and restart Body Lab.")
+            st.error("Login is not configured. Set BODYLAB_DEMO_PASSWORD in .env and restart Sherlock Howls.")
             st.stop()
         with st.form("sign_in"):
             entered_username = st.text_input("Username", placeholder="Enter your username", key="signin_username")
@@ -229,7 +271,7 @@ user = next(u for u in users if u.username == st.session_state["username"])
 pid = user.pid
 
 with st.sidebar:
-    st.markdown("### 🧪 Body Lab")
+    brand()
     st.caption(f"Signed in as **{escape(user.name)}** · {escape(user.label.split(' · ')[1])}")
     if st.button("Sign out", use_container_width=True):
         st.session_state.pop("username", None)
@@ -314,13 +356,13 @@ with st.sidebar:
                 store.write_inputs(pid, minute, pd.concat([meals, pd.DataFrame([row])], ignore_index=True))
                 st.session_state.pop("meal_guess")
                 st.success("Added at the current replay time.")
-    st.caption("Body Lab reports what was different, never causes. Not medical advice.")
+    st.caption("Sherlock Howls reports what was different, never causes. Not medical advice.")
 
-tab_today, tab_case, tab_disc, tab_nb, tab_chat = st.tabs(["Today", "Case", "Discoveries", "Notebook", "💬 Ask Body Lab"])
+tab_today, tab_case, tab_disc, tab_nb, tab_chat = st.tabs(["Today", "Cases", "Findings", "Casebook", "💬 Ask Sherlock Howls"])
 
 if eng.until is None:
     with tab_today:
-        st.title("Body Lab")
+        st.title("Sherlock Howls")
         st.markdown(f"Hi {escape(user.name)}. Your data runs from **{eng.start:%b %d}** to **{eng.end:%b %d}**. "
                     "Use the replay controls on the left to stream it through the agent.")
         _, quest_area = st.columns([3, 2], gap="large")
@@ -328,7 +370,7 @@ if eng.until is None:
             card('<div class="bl-label">Quests · optional</div><div class="bl-sub">No quests currently</div>')
     for tab in (tab_case, tab_disc, tab_nb, tab_chat):
         with tab:
-            st.caption("Start the replay to see your lab.")
+            st.caption("Start the replay to open your casebook.")
     st.stop()
 
 
@@ -344,14 +386,14 @@ sig_df = signals_frame(pid, str(eng.until))
 with tab_today:
     rank, pts, nxt = nb.rank()
     day_start = now.normalize()
-    st.markdown(f"## Hi, {escape(user.name)}")
-    st.caption(f"{now:%A, %b %d, %H:%M} in the replay")
+    st.markdown("## Daily briefing")
+    st.caption(f"{user.name} · {now:%A, %b %d, %H:%M} in the replay")
     left, right = st.columns([3, 2], gap="large")
     with left:
         feed = sorted([m for m in nb.messages if day_start <= pd.Timestamp(m["ts"]) <= now],
                       key=lambda m: pd.Timestamp(m["ts"]), reverse=True)
         if not feed:
-            card('<div class="bl-label">No updates today</div><div class="bl-sub">New possible links and pattern updates will appear here.</div>')
+            card('<div class="bl-label">No new clues today</div><div class="bl-sub">New possible links and pattern updates will appear here.</div>')
         seen_patterns = set()
         displayed = 0
         for m in feed:
@@ -382,25 +424,27 @@ with tab_today:
         bad = sum(e["verdict"] == "bad_data" for e in today_events)
         card(f'<div class="bl-label">Closed quietly today</div>'
              f'<div>{unexplained} surprise{"s" if unexplained != 1 else ""} with no clear reason · {bad} dismissed as bad data</div>'
-             f'<div class="bl-sub">No alerts were sent for these. Details are in the Notebook.</div>')
+             f'<div class="bl-sub">No alerts were sent for these. Details are in the Casebook.</div>')
     with right:
         to_next = f"{nxt - pts} points to the next rank" if nxt else "Top rank reached"
         width = 100 if not nxt else int(pts / nxt * 100)
-        card(f'<div class="bl-label">Scientist rank</div><div class="bl-big">{escape(rank)}</div>'
+        card(f'<div class="bl-label">Detective rank</div><div class="bl-big">{escape(rank)}</div>'
              f'<div class="bl-sub bl-num">{pts} points · {to_next}</div><div class="bar"><i style="width:{width}%;background:var(--acc)"></i></div>')
         if not nb.quests:
             card('<div class="bl-label">Quests · optional</div><div class="bl-sub">No quests currently</div>')
         for q in nb.quests[-2:]:
             card('<div class="bl-label">Quest · optional</div>' + quest_body(q))
         st.markdown('<div class="bl-label">Your labs</div>', unsafe_allow_html=True)
-        cols = st.columns(2)
-        for i, lab in enumerate(LABS.values()):
+        lab_cards = []
+        for lab in LABS.values():
             cards = sum(d["lab"] == lab.key and d["status"] != "rejected" for d in nb.discoveries)
             open_h = sum(h["lab"] == lab.key and h["status"] == "testing" for h in nb.hypotheses)
-            with cols[i % 2]:
-                extra = (f'<div class="bl-sub" title="{escape(EXPLAINER)}" style="cursor:help">stress 1–10, personal ⓘ</div>'
-                         if lab.key == "stress" else "")
-                card(f'<div class="bl-title">{lab.name}</div><div class="bl-sub">{lab.situation}s</div>{extra}{pill(f"{cards} cards", "p-acc")}{pill(f"{open_h} open", "p-plain")}')
+            extra = (f'<div class="bl-sub" title="{escape(EXPLAINER)}" style="cursor:help">stress 1–10, personal ⓘ</div>'
+                     if lab.key == "stress" else "")
+            lab_cards.append(f'<div class="bl-card"><div class="bl-title">{lab.name}</div>'
+                             f'<div class="lab-details"><div class="bl-sub">{lab.situation}s</div>{extra}</div>'
+                             f'<div class="lab-badges">{pill(f"{cards} cards", "p-acc")}{pill(f"{open_h} open", "p-plain")}</div></div>')
+        st.markdown('<div class="lab-grid">' + ''.join(lab_cards) + '</div>', unsafe_allow_html=True)
         if st.button("▶ Weekly recap", use_container_width=True):
             text = voice.recap_text(nb, now)
             text = voice.polish(text)
@@ -450,7 +494,7 @@ def trace(row: pd.Series, lab: str) -> tuple[np.ndarray, np.ndarray]:
 with tab_case:
     cases = sorted(nb.events, key=lambda e: pd.Timestamp(e["ts"]), reverse=True)
     if not cases:
-        st.info("No surprises investigated yet.")
+        st.info("No cases investigated yet.")
     else:
         verdict_label = {"lead": "Possible link", "unexplained": "No clear link", "bad_data": "Bad data"}
         def case_hypothesis(event):
@@ -535,7 +579,7 @@ with tab_case:
 with tab_disc:
     shown = [d for d in nb.discoveries if d["status"] != "rejected"]
     counts = {r: sum(d["rarity"] == r for d in shown) for r in ("legendary", "rare", "common")}
-    st.markdown(f"## Discoveries · {len(shown)} collected")
+    st.markdown(f"## Findings · {len(shown)} collected")
     st.markdown("".join(pill(f"{r.title()} {n}", RARITY_PILL[r][0]) for r, n in counts.items()), unsafe_allow_html=True)
     cols = st.columns(3)
     from bodylab.engine import effect_text  # noqa: E402
@@ -558,7 +602,7 @@ with tab_disc:
 
 # ---------------------------------------------------------------- Notebook
 with tab_nb:
-    st.markdown("## The agent's lab notebook")
+    st.markdown("## Casebook")
     c1, c2 = st.columns(2, gap="large")
     order = {"testing": 0, "fading": 1, "confirmed": 2, "inconclusive": 3, "expired": 4, "rejected": 5}
     unconfirmed = sorted([h for h in nb.hypotheses if h["status"] != "confirmed"], key=lambda h: (order[h["status"]], h["hyp_id"]))
@@ -568,17 +612,17 @@ with tab_nb:
         active = [h for h in unconfirmed if h["status"] in ("testing", "fading")]
         closed = [h for h in unconfirmed if h["status"] not in ("testing", "fading")]
         for h in active:
-            card(pattern_body(h))
+            case_file(h)
         if not active:
-            st.caption("No patterns being checked right now.")
+            st.caption("No open investigations.")
         if closed:
             with st.expander(f"Closed patterns · {len(closed)}"):
                 for h in closed:
-                    card(pattern_body(h))
+                    case_file(h)
     with c2:
         st.markdown(f"### Confirmed · {len(confirmed)}")
         for h in confirmed:
-            card(pattern_body(h))
+            case_file(h)
         if not confirmed:
             st.caption("No confirmed patterns yet.")
 
@@ -600,13 +644,13 @@ with tab_nb:
              f'<div class="bl-sub">{good} passed the data check and counted as natural experiments.</div>')
 
 
-# ---------------------------------------------------------------- Ask Body Lab
+# ---------------------------------------------------------------- Ask Sherlock Howls
 with tab_chat:
-    st.markdown("## Ask Body Lab")
-    st.caption("Ask about patterns, discoveries, hypotheses, and cases Body Lab has actually observed in your data.")
+    st.markdown("## Ask Sherlock Howls")
+    st.caption("Ask about patterns, discoveries, hypotheses, and cases Sherlock Howls has actually observed in your data.")
 
     if not gemini_api_key():
-        st.info("Set `GEMINI_API_KEY` to enable Ask Body Lab.")
+        st.info("Set `GEMINI_API_KEY` to enable Ask Sherlock Howls.")
     else:
         chat_key = f"bodylab_chat_{pid}"
         if chat_key not in st.session_state:
@@ -616,7 +660,7 @@ with tab_chat:
             "What have you learned about me so far?",
             "Which hypothesis has the strongest evidence?",
             "Have any of your ideas been proven wrong?",
-            "What should Body Lab investigate next?",
+            "What should Sherlock Howls investigate next?",
         ]
         if not st.session_state[chat_key]:
             st.markdown('<div class="bl-label">Try asking</div>', unsafe_allow_html=True)
@@ -630,7 +674,7 @@ with tab_chat:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-        typed = st.chat_input("Ask about your Body Lab data…", key=f"chat_input_{pid}")
+        typed = st.chat_input("Ask about your Sherlock Howls data…", key=f"chat_input_{pid}")
         pending_key = f"bodylab_pending_{pid}"
         prompt = st.session_state.pop(pending_key, None) or typed
 
@@ -646,7 +690,7 @@ with tab_chat:
                         answer = chatbot.ask(prompt, history=history)
                     st.markdown(answer)
                 except Exception as exc:
-                    answer = "I couldn't query the Body Lab notebook right now. Please try again in a moment."
+                    answer = "I couldn't query the Sherlock Howls notebook right now. Please try again in a moment."
                     st.error(answer)
                     st.caption(str(exc))
             st.session_state[chat_key].append({"role": "assistant", "content": answer})

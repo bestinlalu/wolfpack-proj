@@ -1,6 +1,6 @@
 """Static demo users, each assigned one participant's data (bodylab/users.json).
 
-Sign-in is for the demo, not real accounts: one shared password from BODYLAB_DEMO_PASSWORD (no password when unset).
+Sign-in is for the demo, not real accounts: a username and one shared password from BODYLAB_DEMO_PASSWORD (login disabled when unset).
 On Databricks Apps, a user whose `email` matches the signed-in workspace account is signed in automatically.
 """
 from __future__ import annotations

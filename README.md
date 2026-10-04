@@ -1,13 +1,15 @@
-# Body Lab
+# Sherlock Howls
 
-**A personal scientist for your body.** When your body reacts differently to a familiar situation, Body Lab's AI agent investigates what was different, opens a hypothesis, and confirms it from your everyday life. No journaling, and no "something was unusual" alerts: you only hear from it when it has an answer.
+**Your body leaves clues.** A personal detective for your body. When your body reacts differently to a familiar situation, Sherlock Howls's AI agent investigates what was different, opens a hypothesis, and confirms it from your everyday life. No journaling, and no "something was unusual" alerts: you only hear from it when it has an answer.
 
-> Health apps give you scores. Body Lab gives you a scientist.
+> Health apps give you scores. Sherlock Howls follows the evidence.
 
 Built at **WolfHacks (ACM at NC State)** for the **Applied AI Software (Databricks)** track.
 
-- **Mockup:** [Body Lab mockup](https://claude.ai/artifact/7PqmPr3Fmg89AdvNkDaDiV)
+- **Mockup:** [Original Body Lab mockup](https://claude.ai/artifact/7PqmPr3Fmg89AdvNkDaDiV)
 - **Status:** working hackathon prototype: data pipeline, investigating agent, Databricks notebooks and web app. Not a medical device and not medical advice.
+
+The web app uses a detective case desk theme: Today’s daily briefing, Cases, Findings, and a Casebook with dated evidence logs. Hypothesis statuses remain Possible link, Confirmed, Mixed evidence, and Denied.
 
 **Quick start (local, no API keys needed):**
 
@@ -57,7 +59,7 @@ Millions of people can now see their glucose curves, but no app tells them **why
 
 ## What makes it different
 
-| Body Lab does | Typical apps do |
+| Sherlock Howls does | Typical apps do |
 | --- | --- |
 | Notifies when it finds a possible link or a confirmed discovery | Alert that something was unusual (for example Fitbit Body Responses, high heart rate alerts) |
 | Investigates one surprising event against similar past situations | Compare with a general average |
@@ -68,7 +70,7 @@ Millions of people can now see their glucose curves, but no app tells them **why
 
 **Example:**
 
-| Fitbit-style alert | Body Lab message |
+| Fitbit-style alert | Sherlock Howls message |
 | --- | --- |
 | "Your heart rate was higher than usual during your walk." | "Your walk heart rate was 15 bpm above your usual for this walk. The biggest difference: you slept 5h 10m vs your usual 7h. Second time seen; 1 more to confirm." |
 | (no follow-up) | "Confirmed: after short nights, your walks run 12 bpm higher. Held in 4 of 5 tests." |
@@ -100,7 +102,7 @@ flowchart LR
 5. **Wait for natural experiments.** Every later situation where the factor is present or absent counts as a test. No deliberate experiments needed.
 6. **Confirm or reject.** Repeated support makes a discovery card; otherwise it is logged as noise.
 
-**Messages: answers, not alerts.** The user hears from Body Lab only with an answer. Every message leads with the why and shows progress ("1 of 3 tests needed to confirm"). Surprises with no clear reason close quietly and appear only as a weekly count.
+**Messages: answers, not alerts.** The user hears from Sherlock Howls only with an answer. Every message leads with the why and shows progress ("1 of 3 tests needed to confirm"). Surprises with no clear reason close quietly and appear only as a weekly count.
 
 ---
 
@@ -178,7 +180,7 @@ flowchart LR
         LIVE --> FEAT[(Feature tables<br/>meals, nights, walks,<br/>personal normals)]
         FEAT --> AGENT[Agent<br/>tools in Python]
         AGENT --> NB[(Lab notebook tables<br/>events, hypotheses,<br/>discoveries, quests)]
-        NB --> APP[Body Lab web app<br/>Databricks App]
+        NB --> APP[Sherlock Howls web app<br/>Databricks App]
     end
     AGENT <--> GEM[Gemini API<br/>reasoning + tool calls]
     AGENT --> EL[ElevenLabs<br/>weekly voice recap]
@@ -332,7 +334,7 @@ Everything is detected from sensors, so playing takes no extra effort.
 | Feature | How it works | User effort |
 | --- | --- | --- |
 | Discovery cards | Each confirmed pattern becomes a card. Rarity: common, rare, legendary | None |
-| Scientist rank | Intern, Lab Tech, Researcher, Professor. Rises with discoveries, never drops | None |
+| Detective rank | Rookie, Sleuth, Detective, Commissioner. Rises with discoveries, never drops | None |
 | Weekly quests | 1 to 3 optional quests from your own findings, completion detected by sensors | Optional |
 | Weekly voice recap | 30-second summary read by ElevenLabs | Tap play |
 | Discovery funnel | Shows how many surprises were dismissed as noise | None |
@@ -508,7 +510,7 @@ The Databricks notebooks and app have been written against the documented APIs b
 3. **The case (0:40 to 1:30):** a possible link appears: "Does less pre-meal walking go with a bigger glucose rise?" Open it: same pasta, +25 vs +70, data check passes, ranked differences, hypothesis opened.
 4. **Confirmation (1:30 to 2:00):** later meals add evidence; the hypothesis becomes a discovery card and the rank rises.
 5. **Rigor (2:00 to 2:30):** the Notebook funnel shows most surprises dismissed; the agent finds a planted change.
-6. **Close (2:30 to 3:00):** the ElevenLabs recap plays. "Health apps give you scores. Body Lab gives you a scientist."
+6. **Close (2:30 to 3:00):** the ElevenLabs recap plays. "Health apps give you scores. Sherlock Howls follows the evidence."
 
 Backup: a recorded 2-minute video.
 
@@ -528,11 +530,11 @@ Backup: a recorded 2-minute video.
 
 | Question | Answer |
 | --- | --- |
-| Isn't this just Fitbit-style notifications? | Fitbit tells you something unusual happened. Body Lab tells you why, checks itself over the next week, and only then calls it a finding. |
+| Isn't this just Fitbit-style notifications? | Fitbit tells you something unusual happened. Sherlock Howls tells you why, checks itself over the next week, and only then calls it a finding. |
 | Isn't one surprising event just an outlier? | Maybe, so one event never becomes a finding. Data is checked first and the pattern must repeat. |
 | Won't meals explain everything? | Situations are matched on meals and known effects are baseline, so the agent finds what else changed. |
 | How do you know the explanations are right? | Planted tests, and it rediscovers known effects such as walking lowering spikes. |
-| Doesn't Levels or WHOOP already do this? | They give scores or need journaling. Body Lab investigates single events and confirms findings automatically. |
+| Doesn't Levels or WHOOP already do this? | They give scores or need journaling. Sherlock Howls investigates single events and confirms findings automatically. |
 | Why is this agentic and not a script? | The agent chooses tools, stops on bad data, and can close a case as unexplained. |
 | Is the data really streaming? | It is replayed through Databricks streaming; a phone app would feed the same pipeline live. |
 | Is this medical advice? | No. It reports what was different, never causes or treatment. |

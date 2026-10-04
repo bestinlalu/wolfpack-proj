@@ -20,7 +20,7 @@ def recap_text(nb: Notebook, until: pd.Timestamp, days: int = 7) -> str:
     rejected = [m for m in recent if m["kind"] == "rejected"]
     quiet = [e for e in nb.events if pd.Timestamp(e["ts"]) > since and e["verdict"] in ("bad_data", "unexplained")]
     rank, pts, nxt = nb.rank()
-    parts = [f"Here's your Body Lab week."]
+    parts = [f"Here's your Sherlock Howls week."]
     if found:
         parts.append(f"You confirmed {len(found)} new discover{'y' if len(found) == 1 else 'ies'}. " + " ".join(m["body"].split(". Held")[0] + "." for m in found[:2]))
     if cases:
