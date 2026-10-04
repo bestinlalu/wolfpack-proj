@@ -132,17 +132,17 @@ def get_store():
     return open_store()
 
 
-@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading from Databricks…")
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Checking for participants…")
 def _cached_pids(_store) -> list[str]:
     return _store.pids()
 
 
-@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your data from Databricks…")
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your wristband and glucose data…")
 def _cached_inputs(_store, pid: str):
     return _store.read_inputs(pid)
 
 
-@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your lab notebook from Databricks…")
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your cases and discoveries…")
 def _cached_state(_store, pid: str):
     return _store.read_state(pid)
 

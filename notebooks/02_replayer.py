@@ -66,16 +66,18 @@ for sub in ("minute", "meals"):
 
 # COMMAND ----------
 
+# Auto Loader skips file names it has already read, so every replay run gets its own names.
+run_id = time.strftime("%Y%m%d%H%M%S")
 t = minute["ts"].min()
 end = minute["ts"].max()
 i = 0
 while t <= end:
     part = minute[(minute["ts"] >= t) & (minute["ts"] < t + chunk)]
     if len(part):
-        part.to_parquet(f"{stream}/minute/{pid}/part_{i:05d}.parquet", index=False)
+        part.to_parquet(f"{stream}/minute/{pid}/run{run_id}_part_{i:05d}.parquet", index=False)
     m = meals[(meals["ts"] >= t) & (meals["ts"] < t + chunk)]
     if len(m):
-        m.to_parquet(f"{stream}/meals/{pid}/part_{i:05d}.parquet", index=False)
+        m.to_parquet(f"{stream}/meals/{pid}/run{run_id}_part_{i:05d}.parquet", index=False)
     if i % 48 == 0:
         print(f"replayed through {t + chunk:%a %b %d %H:%M}")
     t += chunk
