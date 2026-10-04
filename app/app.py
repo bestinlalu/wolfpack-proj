@@ -24,7 +24,7 @@ from bodylab.labs import LABS  # noqa: E402
 from bodylab.pipeline.features import Signals  # noqa: E402
 from bodylab.store import open_store  # noqa: E402
 from bodylab.stress_scale import EXPLAINER, band  # noqa: E402
-from bodylab.users import check_password, find_by_email, load_users, password_required  # noqa: E402
+from bodylab.users import authenticate, find_by_email, load_users, password_required  # noqa: E402
 
 st.set_page_config(page_title="Sherlock Howls", page_icon="🐺", layout="wide")
 
@@ -250,17 +250,21 @@ if "username" not in st.session_state:
     with middle:
         brand()
         st.markdown("Your personal body detective. Sign in to open your casebook.")
+        if not password_required():
+            st.error("Login is not configured. Set BODYLAB_DEMO_PASSWORD in .env and restart Sherlock Howls.")
+            st.stop()
         with st.form("sign_in"):
-            choice = st.selectbox("User", users, format_func=lambda u: u.label, key="signin_user")
-            attempt = st.text_input("Password", type="password", key="signin_password") if password_required() else ""
+            entered_username = st.text_input("Username", placeholder="Enter your username", key="signin_username")
+            attempt = st.text_input("Password", type="password", placeholder="Enter your password", key="signin_password")
             submitted = st.form_submit_button("Sign in", use_container_width=True)
         if submitted:
-            if check_password(attempt):
-                st.session_state["username"] = choice.username
+            signed_in = authenticate(users, entered_username, attempt)
+            if signed_in is not None:
+                st.session_state["username"] = signed_in.username
                 st.rerun()
             else:
-                st.error("That password isn't right. Ask your team for the demo password.")
-        st.caption("Demo accounts: each user is assigned one participant's data from the BIG IDEAs dataset.")
+                st.error("Invalid username or password.")
+        st.caption("Each account is mapped to one participant. Participant selection is not exposed after sign-in.")
     st.stop()
 
 user = next(u for u in users if u.username == st.session_state["username"])
@@ -285,6 +289,15 @@ def load_engine(pid: str) -> Engine:
 
 
 eng = load_engine(pid)
+if eng.minute.empty or pd.isna(eng.start):
+    # Happens while a live replay restarts: 02_replayer cleared this participant and the stream hasn't refilled it yet.
+    st.title(f"Hi, {user.name}")
+    st.info("Your data is streaming in and nothing has arrived yet. Press Refresh in a moment.")
+    if st.button("Refresh"):
+        if store.read_only:
+            clear_cache()
+        st.rerun()
+    st.stop()
 nb = eng.notebook
 now = eng.until or eng.start
 

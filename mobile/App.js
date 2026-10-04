@@ -8,9 +8,11 @@ import { StatusBar } from 'expo-status-bar';
 const API = (process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
 const LAB_NAME = { fuel: 'Fuel', stress: 'Stress', movement: 'Rhythm', sleep: 'Sleep' };
 
+let AUTH_TOKEN = '';
+
 async function request(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: { 'Content-Type': 'application/json', ...(AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : {}), ...(options.headers || {}) },
     ...options,
   });
   let data = {};
@@ -30,11 +32,17 @@ function Pill({ children, tone='plain' }) { return <View style={[styles.pill, st
 function Card({ children, style }) { return <View style={[styles.card, style]}>{children}</View>; }
 function Divider() { return <View style={styles.divider}/>; }
 
-function Header({ pid }) {
+function Header({ user, onSignOut }) {
   return <View style={styles.header}>
     <View><Text style={styles.brand}>BODY LAB</Text><Text style={styles.tagline}>your personal scientist</Text></View>
-    <Text style={styles.pid}>{pid}</Text>
+    <Pressable onPress={onSignOut} style={styles.account}><Text style={styles.accountName}>{user?.name}</Text><Text style={styles.signOut}>Sign out</Text></Pressable>
   </View>;
+}
+
+function Login({ onLogin }) {
+  const [username,setUsername]=useState(''); const [password,setPassword]=useState(''); const [error,setError]=useState(''); const [busy,setBusy]=useState(false);
+  const submit=async()=>{if(!username.trim()||!password)return;setBusy(true);setError('');try{const d=await request('/api/auth/login',{method:'POST',body:JSON.stringify({username:username.trim(),password})});AUTH_TOKEN=d.token;onLogin(d.user);}catch(e){setError(e.message);}finally{setBusy(false);}};
+  return <KeyboardAvoidingView style={styles.loginPage} behavior={Platform.OS==='ios'?'padding':undefined}><View style={styles.loginCard}><Text style={styles.loginBrand}>BODY LAB</Text><Text style={styles.loginTitle}>Welcome back</Text><Text style={styles.loginSub}>Sign in to your personal lab.</Text><Text style={styles.inputLabel}>Username</Text><TextInput value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} placeholder="Enter your username" style={styles.loginInput}/><Text style={styles.inputLabel}>Password</Text><TextInput value={password} onChangeText={setPassword} secureTextEntry placeholder="Enter your password" style={styles.loginInput} onSubmitEditing={submit}/><ErrorText>{error}</ErrorText><Pressable onPress={submit} disabled={busy} style={[styles.loginButton,busy&&{opacity:.65}]}>{busy?<ActivityIndicator color="#fff"/>:<Text style={styles.loginButtonText}>Sign in</Text>}</Pressable></View></KeyboardAvoidingView>;
 }
 
 function LabGrid({ labs }) {
@@ -175,16 +183,19 @@ function BottomNav({ tab, setTab }) {
 }
 
 export default function App(){
-  const[tab,setTab]=useState('today'); const[pid,setPid]=useState('S01'); const[bootError,setBootError]=useState('');
-  useEffect(()=>{request('/api/participants').then(d=>{if(d.participants?.length)setPid(d.participants[0]);}).catch(e=>setBootError(e.message));},[]);
-  const screen=useMemo(()=>({today:<Today pid={pid}/>,case:<Cases pid={pid}/>,discoveries:<Discoveries pid={pid}/>,notebook:<Notebook pid={pid}/>,chat:<Chat pid={pid}/>})[tab],[tab,pid]);
-  return <View style={styles.safe}><StatusBar style="dark"/><Header pid={pid}/><View style={styles.screen}>{bootError?<View style={styles.content}><ErrorText>Can't reach the Body Lab API at {API}. {bootError}</ErrorText></View>:screen}</View><BottomNav tab={tab} setTab={setTab}/></View>;
+  const[tab,setTab]=useState('today'); const[user,setUser]=useState(null);
+  if(!user)return <View style={styles.safe}><StatusBar style="dark"/><Login onLogin={setUser}/></View>;
+  const pid=user.participant_id;
+  const screen=({today:<Today pid={pid}/>,case:<Cases pid={pid}/>,discoveries:<Discoveries pid={pid}/>,notebook:<Notebook pid={pid}/>,chat:<Chat pid={pid}/>})[tab];
+  const signOut=()=>{AUTH_TOKEN='';setUser(null);setTab('today');};
+  return <View style={styles.safe}><StatusBar style="dark"/><Header user={user} onSignOut={signOut}/><View style={styles.screen}>{screen}</View><BottomNav tab={tab} setTab={setTab}/></View>;
 }
 
 const C={ink:'#14292E',text:'#506267',muted:'#879693',line:'#DDE5E2',bg:'#F5F8F7',white:'#FFFFFF',blue:'#315EC9',blueSoft:'#E8EEFC',green:'#2E8558',greenSoft:'#E3F2E9',orange:'#C85B37',orangeSoft:'#FBE9E2',gold:'#9A700B',warn:'#9A6B20'};
 const styles=StyleSheet.create({
   safe:{flex:1,backgroundColor:C.bg,paddingTop:Platform.OS==='ios'?50:18},screen:{flex:1},flex:{flex:1},
-  header:{height:76,paddingHorizontal:20,flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderBottomWidth:1,borderBottomColor:C.line,backgroundColor:C.white},brand:{fontSize:21,fontWeight:'900',letterSpacing:3.2,color:C.ink},tagline:{fontSize:12,color:C.muted,marginTop:3},pid:{fontSize:14,fontWeight:'800',color:C.text},
+  header:{height:76,paddingHorizontal:20,flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderBottomWidth:1,borderBottomColor:C.line,backgroundColor:C.white},brand:{fontSize:21,fontWeight:'900',letterSpacing:3.2,color:C.ink},tagline:{fontSize:12,color:C.muted,marginTop:3},account:{alignItems:'flex-end',paddingVertical:6},accountName:{fontSize:12,fontWeight:'800',color:C.ink},signOut:{fontSize:10.5,fontWeight:'700',color:C.blue,marginTop:2},
+  loginPage:{flex:1,justifyContent:'center',paddingHorizontal:24,backgroundColor:C.bg},loginCard:{backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:20,padding:22,gap:9},loginBrand:{fontSize:18,fontWeight:'900',letterSpacing:3,color:C.ink,marginBottom:12},loginTitle:{fontSize:28,fontWeight:'850',color:C.ink,letterSpacing:-.6},loginSub:{fontSize:14,color:C.muted,marginBottom:12},inputLabel:{fontSize:11,fontWeight:'800',color:C.text,marginTop:4},loginInput:{height:46,borderWidth:1,borderColor:C.line,borderRadius:12,paddingHorizontal:13,fontSize:14,color:C.ink,backgroundColor:'#FBFCFC'},loginButton:{height:48,borderRadius:12,backgroundColor:C.ink,alignItems:'center',justifyContent:'center',marginTop:8},loginButtonText:{color:C.white,fontSize:14,fontWeight:'850'},
   content:{paddingHorizontal:18,paddingTop:20,paddingBottom:28,gap:10},chatContent:{paddingHorizontal:18,paddingTop:20,paddingBottom:18,gap:10},
   pageTitle:{fontSize:30,lineHeight:35,fontWeight:'850',color:C.ink,letterSpacing:-0.7},pageSub:{fontSize:14,lineHeight:20,color:C.muted,marginTop:-5,marginBottom:4},sectionTitle:{fontSize:15,fontWeight:'800',color:C.ink,marginTop:9,marginBottom:1},
   card:{backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:14,padding:14,gap:7},pressed:{opacity:.72},divider:{height:1,backgroundColor:'#EDF1EF',marginVertical:5},

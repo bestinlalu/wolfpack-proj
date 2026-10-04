@@ -4,6 +4,10 @@
 # MAGIC Every few seconds: read what has streamed in so far, run the engine up to the latest timestamp
 # MAGIC (feature tables, hypothesis tests, investigations of new surprises), and write the lab notebook back to Delta.
 # MAGIC The Body Lab app reads these tables. Uses Gemini when the `body-lab/gemini_api_key` secret exists.
+# MAGIC
+# MAGIC The live data can come from `02_replayer` + `03_stream_ingest`, or from a laptop with
+# MAGIC `python scripts/stream_to_databricks.py --pid 001`, which inserts straight into `live_minute` and `live_meals`
+# MAGIC through the SQL warehouse (no other notebook needed).
 
 # COMMAND ----------
 

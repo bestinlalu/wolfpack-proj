@@ -10,6 +10,7 @@ from bodylab.labs import LABS
 
 def _sanitize(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    df.attrs = {}
     for c in df.columns:
         if df[c].dtype == object:
             df[c] = df[c].map(lambda v: None if v is None or (isinstance(v, float) and np.isnan(v)) else (v if isinstance(v, (str, bool)) else str(v)))
@@ -29,7 +30,11 @@ def write_pid_table(spark, df: pd.DataFrame, table: str, pid: str) -> None:
 def read_pid_table(spark, table: str, pid: str) -> pd.DataFrame:
     if not spark.catalog.tableExists(table):
         return pd.DataFrame()
-    return spark.table(table).where(f"pid = '{pid}'").toPandas()
+    pdf = spark.table(table).where(f"pid = '{pid}'").toPandas()
+    # On serverless, toPandas() puts PlanMetrics objects in pdf.attrs; pandas then fails writing parquet
+    # ("Object of type PlanMetrics is not JSON serializable"), so drop them.
+    pdf.attrs = {}
+    return pdf
 
 
 def save_state(spark, prefix: str, pid: str, features: dict[str, pd.DataFrame], nb: Notebook, until, agent: str) -> None:

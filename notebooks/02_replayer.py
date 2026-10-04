@@ -45,14 +45,20 @@ dbutils.widgets.dropdown("reset", "yes", ["yes", "no"])
 catalog, schema, pid = dbutils.widgets.get("catalog"), dbutils.widgets.get("schema"), dbutils.widgets.get("pid")
 prefix = f"{catalog}.{schema}"
 stream = f"/Volumes/{catalog}/{schema}/stream"
+checkpoints = f"/Volumes/{catalog}/{schema}/checkpoints"
 chunk = pd.Timedelta(minutes=int(dbutils.widgets.get("chunk_minutes")))
 pause = float(dbutils.widgets.get("seconds_per_chunk"))
 
 # COMMAND ----------
 
 if dbutils.widgets.get("reset") == "yes":
+    # Start the stream from scratch: remove all stream files and Auto Loader's checkpoints, so files from
+    # earlier runs (including any it could not read) are never picked up again. Live tables of other
+    # participants are left alone; 05_batch_all restores them if needed.
     for sub in ("minute", "meals"):
-        dbutils.fs.rm(f"{stream}/{sub}/{pid}", recurse=True)
+        dbutils.fs.rm(f"{stream}/{sub}", recurse=True)
+    for sub in ("minute", "minute_schema", "meals", "meals_schema"):
+        dbutils.fs.rm(f"{checkpoints}/{sub}", recurse=True)
     for table in ["live_minute", "live_meals"] + [t for t in ("features_fuel", "features_stress", "features_sleep", "features_movement",
                   "nb_events", "nb_hypotheses", "nb_evidence", "nb_discoveries", "nb_quests", "nb_messages", "nb_processed", "agent_state")]:
         if spark.catalog.tableExists(f"{prefix}.{table}"):
@@ -61,6 +67,9 @@ if dbutils.widgets.get("reset") == "yes":
 
 minute = read_pid_table(spark, f"{prefix}.minute_signals", pid).sort_values("ts")
 meals = read_pid_table(spark, f"{prefix}.meals", pid).sort_values("ts")
+# Serverless toPandas() leaves PlanMetrics in .attrs, which to_parquet cannot save; clear them here too in case
+# this session imported an older bodylab (restart Python after pulling to load new code).
+minute.attrs, meals.attrs = {}, {}
 for sub in ("minute", "meals"):
     os.makedirs(f"{stream}/{sub}/{pid}", exist_ok=True)
 
@@ -68,16 +77,20 @@ for sub in ("minute", "meals"):
 
 # Auto Loader skips file names it has already read, so every replay run gets its own names.
 run_id = time.strftime("%Y%m%d%H%M%S")
+# Spark can't read nanosecond parquet timestamps (pandas' default), so write microseconds.
+PARQUET = {"coerce_timestamps": "us", "allow_truncated_timestamps": True}
 t = minute["ts"].min()
 end = minute["ts"].max()
 i = 0
 while t <= end:
     part = minute[(minute["ts"] >= t) & (minute["ts"] < t + chunk)]
     if len(part):
-        part.to_parquet(f"{stream}/minute/{pid}/run{run_id}_part_{i:05d}.parquet", index=False)
+        part.attrs = {}
+        part.to_parquet(f"{stream}/minute/{pid}/run{run_id}_part_{i:05d}.parquet", index=False, **PARQUET)
     m = meals[(meals["ts"] >= t) & (meals["ts"] < t + chunk)]
     if len(m):
-        m.to_parquet(f"{stream}/meals/{pid}/run{run_id}_part_{i:05d}.parquet", index=False)
+        m.attrs = {}
+        m.to_parquet(f"{stream}/meals/{pid}/run{run_id}_part_{i:05d}.parquet", index=False, **PARQUET)
     if i % 48 == 0:
         print(f"replayed through {t + chunk:%a %b %d %H:%M}")
     t += chunk
