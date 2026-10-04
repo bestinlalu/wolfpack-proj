@@ -27,6 +27,17 @@ CASES = (
 CASE_DIRECTIONS = {key: (1 if key == "ronaldo" else -1) for key, *_ in CASES}
 
 
+
+def _plain(value) -> pd.Timestamp:
+    """Quests saved earlier may hold UTC-tagged times; the pipeline compares plain times."""
+    ts = pd.Timestamp(value)
+    return ts.tz_convert("UTC").tz_localize(None) if ts.tzinfo is not None else ts
+
+
+def _plain_col(values: pd.Series) -> pd.Series:
+    ts = pd.to_datetime(values)
+    return ts.dt.tz_convert("UTC").dt.tz_localize(None) if ts.dt.tz is not None else ts
+
 def _same_investigation(q: dict, h: dict) -> bool:
     if q.get("hyp_id") == h["hyp_id"]:
         return True
@@ -43,14 +54,14 @@ def suggest(features: dict[str, pd.DataFrame], now: pd.Timestamp,
         matching = [h for h in hypotheses if h["status"] in ("testing", "fading")
                     and h["lab"] == lab and h["factor"] == feature
                     and h["direction"] == CASE_DIRECTIONS[key]
-                    and (pd.isna(h.get("opened_at")) or pd.Timestamp(h["opened_at"]) <= now)]
+                    and (pd.isna(h.get("opened_at")) or _plain(h["opened_at"]) <= now)]
         if not matching or any(_same_investigation(q, h) for q in quests for h in matching):
             continue
         hypothesis = matching[0]
         df = features.get(lab, pd.DataFrame())
         if df.empty or feature not in df or "end_ts" not in df:
             continue
-        history = df[pd.to_datetime(df["end_ts"]) <= now]
+        history = df[_plain_col(df["end_ts"]) <= now]
         if "good_data" in history:
             history = history[history["good_data"].fillna(False).astype(bool)]
         values = pd.to_numeric(history[feature], errors="coerce")
@@ -90,14 +101,14 @@ def accept(quests: list[dict], lead: dict, now: pd.Timestamp) -> bool:
 def update(quests: list[dict], features: dict[str, pd.DataFrame], now: pd.Timestamp) -> None:
     for q in quests:
         df = features.get(q["lab"], pd.DataFrame())
-        if now < pd.Timestamp(q["started_at"]):
+        if now < _plain(q["started_at"]):
             q["started_at"] = now.isoformat()
             q["observations"] = []
         # A rewind must not retain observations from the future.
-        q["observations"] = [o for o in q["observations"] if pd.Timestamp(o["ts"]) <= now]
+        q["observations"] = [o for o in q["observations"] if _plain(o["ts"]) <= now]
         seen = {o["sid"] for o in q["observations"]}
         if not df.empty:
-            rows = df[(pd.to_datetime(df["end_ts"]) > pd.Timestamp(q["started_at"])) & (pd.to_datetime(df["end_ts"]) <= now)]
+            rows = df[(_plain_col(df["end_ts"]) > _plain(q["started_at"])) & (_plain_col(df["end_ts"]) <= now)]
             for _, row in rows.sort_values("end_ts").iterrows():
                 value = row.get(q["feature"], np.nan)
                 response = row.get("response", np.nan)

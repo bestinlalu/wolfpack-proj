@@ -160,6 +160,12 @@ class BodyLabChat:
             try:
                 return self._client.models.generate_content(model=model, contents=contents, config=config)
             except errors.APIError as exc:
+                if getattr(exc, "code", None) == 400 and getattr(config, "thinking_config", None) is not None:
+                    try:  # a model that doesn't take thinking_level: ask it again without one
+                        plain = config.model_copy(update={"thinking_config": None})
+                        return self._client.models.generate_content(model=model, contents=contents, config=plain)
+                    except errors.APIError as retry_exc:
+                        exc = retry_exc
                 if getattr(exc, "code", None) not in (404, 429, 500, 503, 504):
                     raise
                 last_error = exc
@@ -190,10 +196,23 @@ class BodyLabChat:
             system_instruction=SYSTEM_PROMPT,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             temperature=0.15,
-            max_output_tokens=700,
+            # Gemini 3 counts its thinking toward this limit; 700 left answers cut off mid-list. Keep thinking
+            # light and give the answer itself plenty of room (the prompt already asks for short replies).
+            max_output_tokens=4096,
+            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW),
         )
         response = self._generate(json.dumps(payload, default=str, ensure_ascii=False), config)
         text = (response.text or "").strip()
         if not text:
             raise RuntimeError("Gemini returned an empty response.")
+        if _finish_reason(response) == "MAX_TOKENS":
+            text += "\n\n_(That answer hit the length limit. Ask me to continue or narrow the question.)_"
         return text
+
+
+def _finish_reason(response) -> str:
+    try:
+        reason = response.candidates[0].finish_reason
+        return getattr(reason, "name", str(reason or ""))
+    except (AttributeError, IndexError, TypeError):
+        return ""

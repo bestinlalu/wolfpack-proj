@@ -86,6 +86,16 @@ class LocalStore:
         (self.root / pid / "state.json").unlink(missing_ok=True)
 
 
+def _plain_times(df: pd.DataFrame) -> pd.DataFrame:
+    """The warehouse returns some timestamps tagged UTC and others untagged, depending on how each table was made.
+    The pipeline uses plain times throughout (as in local mode), and pandas can't compare the two kinds, so drop
+    the tag (values are UTC wall-clock times, which is how they were written)."""
+    for c in df.columns:
+        if isinstance(df[c].dtype, pd.DatetimeTZDtype):
+            df[c] = df[c].dt.tz_convert("UTC").dt.tz_localize(None)
+    return df
+
+
 class DatabricksSqlStore:
     """Read-only pipeline results plus reviewed photo-meal writes, for the Databricks App.
 
@@ -132,7 +142,7 @@ class DatabricksSqlStore:
                             cur.execute(statement)
                         else:
                             cur.execute(statement, parameters=parameters)
-                        return cur.fetchall_arrow().to_pandas() if fetch else None
+                        return _plain_times(cur.fetchall_arrow().to_pandas()) if fetch else None
                 except Exception as exc:
                     if attempt or "TABLE_OR_VIEW_NOT_FOUND" in str(exc):  # a missing table is a real answer
                         raise

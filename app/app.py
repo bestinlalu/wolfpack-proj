@@ -18,6 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bodylab import celebrity_cases, meal_photo, voice  # noqa: E402
 from bodylab import patterns  # noqa: E402
+from bodylab import meditation  # noqa: E402
+import streamlit.components.v1 as components  # noqa: E402
 from bodylab.agent.investigator import make_investigator  # noqa: E402
 from bodylab.agent.chat import BodyLabChat  # noqa: E402
 from bodylab.formatting import fmt as _fmt  # noqa: E402
@@ -288,12 +290,19 @@ if store.read_only:
     def sync_panel(seen: str, pid: str) -> None:
         """Runs on its own every few seconds without blocking the page: checks Databricks for new agent results,
         loads them in the background, and only then swaps them in (an instant rerun from the warm cache)."""
+        # The status line always holds text (the last message until a new one replaces it), so its height never
+        # changes and the rest of the sidebar doesn't jump while a check runs.
         status = st.empty()
+        status.caption(st.session_state.get("sync_status", "● In sync with Databricks"))
         sync_now = st.button("⟳ Sync now", key="sync_now", use_container_width=True,
                              help="Fetch the latest results from Databricks right away")
+        if any(v is True and (k in ("recap_pending", "visualization_pending") or k.startswith("meditation_pending_"))
+               for k, v in st.session_state.items()):
+            _show(status, "⏸ Sync paused while your audio is prepared")
+            return
         latest = store.signature()
         if sync_now or latest != seen:
-            status.caption("⟳ Syncing with Databricks…")
+            _show(status, "⟳ Syncing with Databricks…")
             if sync_now:
                 _cached_inputs.clear()
                 _cached_state.clear()
@@ -301,7 +310,11 @@ if store.read_only:
             _cached_state(store, pid, latest)
             st.session_state["synced"] = (pid, latest)
             st.rerun()
-        status.caption(f"● In sync with Databricks · checked {pd.Timestamp.now():%H:%M:%S}")
+        _show(status, f"● In sync with Databricks · checked {pd.Timestamp.now():%H:%M:%S}")
+
+    def _show(status, text: str) -> None:
+        st.session_state["sync_status"] = text
+        status.caption(text)
 
 # Sign-in list: in Databricks mode the `users` table (all users, whether or not the agent has results for them yet);
 # locally, users whose participant is prepared on this laptop.
@@ -480,7 +493,102 @@ with st.sidebar:
                     st.rerun()
     st.caption("Sherlock Howls reports what was different, never causes. Not medical advice.")
 
-tab_today, tab_case, tab_disc, tab_nb, tab_chat = st.tabs(["Today", "Cases", "Findings", "Casebook", "💬 Ask Sherlock Howls"])
+def _speak_cached(text: str) -> bytes | None:
+    """ElevenLabs audio, kept for the session so the same line is never paid for twice."""
+    cache = st.session_state.setdefault("voice_cache", {})
+    if text not in cache:
+        cache[text] = voice.speak(text)
+    return cache[text]
+
+
+def mindfulness_tab() -> None:
+    st.markdown("## Mindfulness")
+    st.caption("Guided meditations, written by Gemini and read aloud by ElevenLabs.")
+    if not elevenlabs_api_key():
+        st.info("Set `ELEVENLABS_API_KEY` (and your own `ELEVENLABS_VOICE_ID`) to hear these read aloud.")
+
+    def _ask(key: str) -> None:  # runs before the rerun, so the background sync pauses while we generate
+        st.session_state[key] = True
+
+    # ---- timed guided meditations
+    st.markdown("### Guided meditation")
+    practice = meditation.PRACTICES[st.radio("Practice", list(meditation.PRACTICES), horizontal=True,
+                                             format_func=lambda k: meditation.PRACTICES[k].name, key="med_practice")]
+    c1, c2 = st.columns(2)
+    minutes = c1.number_input("Minutes per round", 1, 60, practice.round_min, key=f"mm_{practice.key}")
+    rounds = c2.number_input("Rounds", 1, 8, practice.rounds, key=f"mn_{practice.key}")
+    session_key = f"meditation_{pid}_{practice.key}"
+    pending = f"meditation_pending_{practice.key}"
+    st.button(f"Prepare {practice.name.lower()}", key=f"prep_{practice.key}", on_click=_ask, args=(pending,))
+    if st.session_state.get(pending):
+        try:
+            with st.spinner("Writing and recording your meditation…"):
+                cues = meditation.write_cues(practice, user.name, voice.recap_text(nb, now), minutes, rounds)
+                audio, note = {}, ""
+                for c in meditation.cue_names(practice, rounds):
+                    try:
+                        audio[c] = _speak_cached(cues[c])
+                    except Exception as exc:
+                        note = f"Voice unavailable: {exc}"
+            st.session_state[session_key] = {"cues": cues, "audio": audio, "note": note,
+                                             "plan": (int(minutes), int(rounds))}
+        finally:
+            st.session_state[pending] = False
+    prepared = st.session_state.get(session_key)
+    if prepared:
+        m, n = prepared["plan"]
+        if (m, n) != (minutes, rounds):
+            st.caption("Settings changed: prepare the meditation again to use them.")
+        components.html(meditation.timer_html(practice, m, n, prepared["audio"], f"{pid}-{practice.key}"), height=200)
+        if prepared["note"]:
+            st.caption(prepared["note"])
+        elif not any(prepared["audio"].values()):
+            st.caption("No voice yet: the timer runs silently until ElevenLabs is set up.")
+        with st.expander("What you'll hear"):
+            for c in meditation.cue_names(practice, n):
+                st.markdown(f"**{'Check-in' if c == 'checkin' else c.title()}** · {prepared['cues'][c]}")
+
+    # ---- guided visualization
+    st.markdown("### Guided visualization")
+    if not gemini_api_key():
+        st.info("Set `GEMINI_API_KEY` to have Gemini write guided visualizations.")
+        return
+    s1, s2 = st.columns([3, 1])
+    theme = s1.text_input("Setting (optional)", placeholder="a quiet beach at dawn, a forest after rain…",
+                          key="viz_theme")
+    length = s2.selectbox("Length", list(meditation.VISUALIZATION_LENGTHS), key="viz_length")
+    viz_key = f"visualization_{pid}"
+    st.button("Create visualization", key="viz_go", on_click=_ask, args=("visualization_pending",))
+    if st.session_state.get("visualization_pending"):
+        try:
+            with st.spinner("Writing your meditation…"):
+                title, script = meditation.write_visualization(user.name, theme, meditation.VISUALIZATION_LENGTHS[length])
+            note, audio = "", None
+            with st.spinner("Recording it…"):
+                try:
+                    audio = _speak_cached(script)
+                except Exception as exc:
+                    note = f"Voice unavailable: {exc}"
+            st.session_state[viz_key] = {"title": title, "text": script, "audio": audio, "note": note}
+        except Exception as exc:
+            st.error(f"Couldn't write a meditation right now: {exc}")
+        finally:
+            st.session_state["visualization_pending"] = False
+    made = st.session_state.get(viz_key)
+    if made:
+        st.markdown(f"#### {escape(made['title'])}")
+        if made["audio"]:
+            st.audio(made["audio"], format="audio/mpeg")
+        elif made["note"]:
+            st.caption(made["note"])
+        with st.expander("Read the meditation", expanded=False):
+            st.write(made["text"])
+
+
+tab_today, tab_case, tab_disc, tab_nb, tab_chat, tab_mind = st.tabs(
+    ["Today", "Cases", "Findings", "Casebook", "💬 Ask Sherlock Howls", "Mindfulness"])
+with tab_mind:
+    mindfulness_tab()
 
 if eng.until is None:
     with tab_today:
@@ -572,18 +680,35 @@ with tab_today:
                              f'<div class="lab-details"><div class="bl-sub">{lab.situation}s</div>{extra}</div>'
                              f'<div class="lab-badges">{pill(f"{cards} cards", "p-acc")}{pill(f"{open_h} open", "p-plain")}</div></div>')
         st.markdown('<div class="lab-grid">' + ''.join(lab_cards) + '</div>', unsafe_allow_html=True)
-        if st.button("▶ Weekly recap", use_container_width=True):
-            text = voice.recap_text(nb, now)
-            text = voice.polish(text)
-            st.write(text)
-            try:
-                audio = voice.speak(text)
-                if audio:
-                    st.audio(audio, format="audio/mpeg")
-                else:
-                    st.caption("Set ELEVENLABS_API_KEY to hear this read aloud.")
-            except Exception as exc:
-                st.caption(f"Voice unavailable: {exc}")
+        # The recap is kept in session state: the page reloads by itself when new results arrive (Databricks mode),
+        # which would otherwise wipe a recap that only existed on the click's run.
+        def _request_recap() -> None:
+            st.session_state["recap_pending"] = True
+            st.session_state.pop("recap", None)
+
+        st.button("▶ Weekly recap", use_container_width=True, on_click=_request_recap)
+        if st.session_state.get("recap_pending"):
+            with st.spinner("Writing your weekly recap…"):
+                text = voice.polish(voice.recap_text(nb, now))
+                audio, note = None, ""
+                try:
+                    audio = voice.speak(text)
+                    if not audio:
+                        note = "Set ELEVENLABS_API_KEY to hear this read aloud."
+                except Exception as exc:
+                    note = f"Voice unavailable: {exc}"
+            st.session_state["recap"] = {"pid": pid, "text": text, "audio": audio, "note": note}
+            st.session_state["recap_pending"] = False
+        recap = st.session_state.get("recap")
+        if recap and recap["pid"] == pid:
+            st.write(recap["text"])
+            if recap["audio"]:
+                st.audio(recap["audio"], format="audio/mpeg")
+            if recap["note"]:
+                st.caption(recap["note"])
+            if st.button("✕ Close recap", key="close_recap"):
+                st.session_state.pop("recap", None)
+                st.rerun()
 
 # ---------------------------------------------------------------- Case
 def situation_row(sid: str | None) -> tuple[str, pd.Series] | None:
