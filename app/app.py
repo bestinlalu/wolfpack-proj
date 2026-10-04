@@ -17,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bodylab import celebrity_cases, meal_photo, voice  # noqa: E402
 from bodylab import patterns  # noqa: E402
+from bodylab import voice_sessions  # noqa: E402
+import streamlit.components.v1 as components  # noqa: E402
 from bodylab.agent.investigator import make_investigator  # noqa: E402
 from bodylab.agent.chat import BodyLabChat  # noqa: E402
 from bodylab.formatting import fmt as _fmt  # noqa: E402
@@ -293,8 +295,9 @@ if store.read_only:
         status.caption(st.session_state.get("sync_status", "● In sync with Databricks"))
         sync_now = st.button("⟳ Sync now", key="sync_now", use_container_width=True,
                              help="Fetch the latest results from Databricks right away")
-        if st.session_state.get("recap_pending"):
-            _show(status, "⏸ Sync paused while your recap is written")
+        if any(v is True and (k in ("recap_pending", "story_pending") or k.startswith("voice_pending_"))
+               for k, v in st.session_state.items()):
+            _show(status, "⏸ Sync paused while your audio is prepared")
             return
         latest = store.signature()
         if sync_now or latest != seen:
@@ -461,7 +464,107 @@ with st.sidebar:
                 st.success("Added at the current replay time.")
     st.caption("Sherlock Howls reports what was different, never causes. Not medical advice.")
 
-tab_today, tab_case, tab_disc, tab_nb, tab_chat = st.tabs(["Today", "Cases", "Findings", "Casebook", "💬 Ask Sherlock Howls"])
+def _speak_cached(text: str) -> bytes | None:
+    """ElevenLabs audio, kept for the session so the same line is never paid for twice."""
+    cache = st.session_state.setdefault("voice_cache", {})
+    if text not in cache:
+        cache[text] = voice.speak(text)
+    return cache[text]
+
+
+def voices_tab() -> None:
+    st.markdown("## Voices")
+    st.caption("Guided sessions and bedtime stories. Gemini writes the words; ElevenLabs reads them.")
+    if not elevenlabs_api_key():
+        st.info("Set `ELEVENLABS_API_KEY` (and your own `ELEVENLABS_VOICE_ID`) to hear these read aloud.")
+
+    def _ask(key: str) -> None:  # runs before the rerun, so the background sync pauses while we generate
+        st.session_state[key] = True
+
+    # ---- guided sessions
+    st.markdown("### Guided sessions")
+    mode = voice_sessions.MODES[st.radio("Session", list(voice_sessions.MODES), horizontal=True,
+                                         format_func=lambda k: voice_sessions.MODES[k].name, key="voice_mode")]
+    c1, c2, c3 = st.columns(3)
+    work = c1.number_input(f"{mode.work_label} (min)", 1, 180, mode.work_min, key=f"vw_{mode.key}")
+    rest = c2.number_input(f"{mode.rest_label} (min)", 0, 60, mode.rest_min, key=f"vr_{mode.key}",
+                           disabled=mode.rounds == 1)
+    rounds = c3.number_input("Rounds", 1, 8, mode.rounds, key=f"vn_{mode.key}")
+    session_key = f"voice_session_{pid}_{mode.key}"
+    pending = f"voice_pending_{mode.key}"
+    st.button(f"🎙 Prepare {mode.name.lower()} session", key=f"prep_{mode.key}", on_click=_ask, args=(pending,))
+    if st.session_state.get(pending):
+        try:
+            with st.spinner("Writing and recording your cues…"):
+                cues = voice_sessions.write_cues(mode, user.name, voice.recap_text(nb, now), work, rest)
+                audio, note = {}, ""
+                for c in voice_sessions.cue_names(mode):
+                    try:
+                        audio[c] = _speak_cached(cues[c])
+                    except Exception as exc:
+                        note = f"Voice unavailable: {exc}"
+            st.session_state[session_key] = {"cues": cues, "audio": audio, "note": note,
+                                             "plan": (int(work), int(rest), int(rounds))}
+        finally:
+            st.session_state[pending] = False
+    prepared = st.session_state.get(session_key)
+    if prepared:
+        w, r, n = prepared["plan"]
+        if (w, r, n) != (work, rest, rounds):
+            st.caption("Settings changed: prepare the session again to use them.")
+        components.html(voice_sessions.timer_html(mode, w, r if mode.rounds > 1 else 0, n, prepared["audio"],
+                                                  f"{pid}-{mode.key}"), height=200)
+        if prepared["note"]:
+            st.caption(prepared["note"])
+        elif not any(prepared["audio"].values()):
+            st.caption("No voice yet: the timer runs silently until ElevenLabs is set up.")
+        with st.expander("What you'll hear"):
+            for c in voice_sessions.cue_names(mode):
+                st.markdown(f"**{c.title()}** · {prepared['cues'][c]}")
+        if mode.key == "drive":
+            st.caption("Start it before you set off, then keep your eyes on the road; the cues play by themselves.")
+
+    # ---- bedtime stories
+    st.markdown("### Bedtime story")
+    if not gemini_api_key():
+        st.info("Set `GEMINI_API_KEY` to have Gemini write bedtime stories.")
+        return
+    s1, s2 = st.columns([3, 1])
+    theme = s1.text_input("Theme (optional)", placeholder="a lighthouse keeper, a slow train through snow…",
+                          key="story_theme")
+    length = s2.selectbox("Length", list(voice_sessions.STORY_LENGTHS), key="story_length")
+    story_key = f"voice_story_{pid}"
+    st.button("🌙 Tell me a story", key="story_go", on_click=_ask, args=("story_pending",))
+    if st.session_state.get("story_pending"):
+        try:
+            with st.spinner("Writing tonight's story…"):
+                title, story = voice_sessions.write_story(user.name, theme, voice_sessions.STORY_LENGTHS[length])
+            note, audio = "", None
+            with st.spinner("Recording it…"):
+                try:
+                    audio = _speak_cached(story)
+                except Exception as exc:
+                    note = f"Voice unavailable: {exc}"
+            st.session_state[story_key] = {"title": title, "text": story, "audio": audio, "note": note}
+        except Exception as exc:
+            st.error(f"Couldn't write a story right now: {exc}")
+        finally:
+            st.session_state["story_pending"] = False
+    told = st.session_state.get(story_key)
+    if told:
+        st.markdown(f"#### {escape(told['title'])}")
+        if told["audio"]:
+            st.audio(told["audio"], format="audio/mpeg")
+        elif told["note"]:
+            st.caption(told["note"])
+        with st.expander("📖 Read the story", expanded=False):
+            st.write(told["text"])
+
+
+tab_today, tab_case, tab_disc, tab_nb, tab_chat, tab_voice = st.tabs(
+    ["Today", "Cases", "Findings", "Casebook", "💬 Ask Sherlock Howls", "🎧 Voices"])
+with tab_voice:
+    voices_tab()
 
 if eng.until is None:
     with tab_today:
