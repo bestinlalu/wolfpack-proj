@@ -530,6 +530,14 @@ def mindfulness_tab() -> None:
     def _ask(key: str) -> None:  # runs before the rerun, so the background sync pauses while we generate
         st.session_state[key] = True
 
+    def _reset() -> None:
+        for k in [k for k in st.session_state if k.startswith((f"meditation_{pid}_", f"visualization_{pid}"))]:
+            del st.session_state[k]
+
+    # Everything prepared here stays in this session (switching tabs or practices keeps it) until Reset.
+    st.button("Reset", key="mind_reset", on_click=_reset,
+              help="Clear the meditations and visualization prepared here")
+
     # ---- timed guided meditations
     st.markdown("### Guided meditation")
     practice = meditation.PRACTICES[st.radio("Practice", list(meditation.PRACTICES), horizontal=True,
@@ -560,7 +568,8 @@ def mindfulness_tab() -> None:
                     except Exception as exc:
                         music_note = f"Background music unavailable: {exc}"
             st.session_state[session_key] = {"cues": cues, "audio": audio, "note": note, "music": music,
-                                             "music_note": music_note, "plan": (int(minutes), int(rounds))}
+                                             "music_note": music_note, "plan": (int(minutes), int(rounds)),
+                                             "created": pd.Timestamp.now().strftime("%Y%m%d%H%M%S")}
         finally:
             st.session_state[pending] = False
     prepared = st.session_state.get(session_key)
@@ -568,8 +577,9 @@ def mindfulness_tab() -> None:
         m, n = prepared["plan"]
         if (m, n) != (minutes, rounds):
             st.caption("Settings changed: prepare the meditation again to use them.")
-        components.html(meditation.timer_html(practice, m, n, prepared["audio"], f"{pid}-{practice.key}",
-                                              music=prepared.get("music")), height=235)
+        timer_id = f"{pid}-{practice.key}-{prepared.get('created', '')}"  # a new timer for each preparation
+        components.html(meditation.timer_html(practice, m, n, prepared["audio"], timer_id,
+                                              music=prepared.get("music")), height=265)
         if prepared.get("music_note"):
             st.caption(prepared["music_note"])
         if prepared["note"]:

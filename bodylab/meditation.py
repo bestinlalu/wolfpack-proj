@@ -199,11 +199,14 @@ def timer_html(practice: Practice, round_min: int, rounds: int, audio: dict, tim
 _TIMER = """
 <div id="t" style="font-family:system-ui,sans-serif;text-align:center;padding:12px;border:1px solid #8884;border-radius:14px">
   <div id="label" style="font-size:15px;opacity:.75">Ready</div>
-  <div id="clock" style="font-size:52px;font-weight:700;font-variant-numeric:tabular-nums;margin:2px 0 8px">--:--</div>
-  <div style="height:6px;background:#8883;border-radius:3px;overflow:hidden;margin:0 12px 12px">
-    <div id="bar" style="height:100%;width:0;background:#6c63ff;transition:width .5s"></div></div>
-  <button id="go" style="padding:8px 20px;border-radius:10px;border:0;background:#6c63ff;color:#fff;font-size:15px;cursor:pointer">Begin</button>
-  <button id="stop" style="padding:8px 16px;border-radius:10px;border:1px solid #8886;background:none;color:inherit;font-size:15px;cursor:pointer;display:none">End</button>
+  <div id="clock" style="font-size:52px;font-weight:700;font-variant-numeric:tabular-nums;margin:2px 0 6px">--:--</div>
+  <input id="seek" type="range" min="0" value="0" step="1" style="width:calc(100% - 24px);margin:0 12px 10px;accent-color:#6c63ff"
+         aria-label="Position in the meditation">
+  <div>
+    <button id="go" style="padding:8px 20px;border-radius:10px;border:0;background:#6c63ff;color:#fff;font-size:15px;cursor:pointer">Begin</button>
+    <button id="pause" style="padding:8px 16px;border-radius:10px;border:1px solid #8886;background:none;color:inherit;font-size:15px;cursor:pointer;display:none">Pause</button>
+    <button id="stop" style="padding:8px 16px;border-radius:10px;border:1px solid #8886;background:none;color:inherit;font-size:15px;cursor:pointer;display:none">End</button>
+  </div>
   <div id="mus" style="display:none;margin-top:10px;font-size:13px;opacity:.8">
     <button id="mtoggle" style="padding:3px 10px;border-radius:8px;border:1px solid #8886;background:none;color:inherit;font-size:13px;cursor:pointer">Music on</button>
     <label style="margin-left:8px">Volume <input id="mvol" type="range" min="0" max="100" value="35" style="vertical-align:middle;width:110px"></label>
@@ -211,48 +214,72 @@ _TIMER = """
 </div>
 <script>
 const P = __PHASES__, S = __SOUNDS__, M = __MUSIC__, KEY = "bodylab-timer-" + __ID__;
-const music = M ? new Audio(M) : null;
-let musicOn = true;
-if (music) { music.loop = true; $mus(); }
-function $mus() { document.getElementById("mus").style.display = ""; }
-function vol() { return document.getElementById("mvol").value / 100; }
-function musicPlay() { if (music && musicOn) { music.volume = vol(); music.play().catch(() => {}); } }
-function musicStop() { if (music) { music.pause(); music.currentTime = 0; } }
 const total = P.reduce((a, p) => a + p.sec, 0);
 const $ = id => document.getElementById(id);
-let start = null, played = -1, tick = null;
-try { start = Number(localStorage.getItem(KEY)) || null; } catch (e) {}
-function save(v) { try { v ? localStorage.setItem(KEY, v) : localStorage.removeItem(KEY); } catch (e) {} }
+const music = M ? new Audio(M) : null;
+let musicOn = true, tick = null, played = -1, dragging = false;
+let st = null;  // {start: ms when position 0 was, paused: seconds or null}
+try { st = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (e) {}
+$("seek").max = total;
+if (music) { music.loop = true; $("mus").style.display = ""; }
+function save() { try { st ? localStorage.setItem(KEY, JSON.stringify(st)) : localStorage.removeItem(KEY); } catch (e) {} }
+function vol() { return $("mvol").value / 100; }
+function musicPlay() { if (music && musicOn && st && st.paused === null) { music.volume = vol(); music.play().catch(() => {}); } }
+function musicPause() { if (music) music.pause(); }
 function play(cue) {  // the music dips while the voice speaks
   if (!S[cue]) return;
   const a = new Audio(S[cue]);
   if (music) { music.volume = vol() * 0.35; a.onended = () => { music.volume = vol(); }; }
   a.play().catch(() => {});
 }
+function pos() { return !st ? 0 : st.paused !== null ? st.paused : (Date.now() - st.start) / 1000; }
+function phaseAt(t) { let i = 0; while (i < P.length - 1 && t >= P[i].sec) { t -= P[i].sec; i++; } return [i, t]; }
 function fmt(s) { s = Math.max(0, Math.ceil(s)); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); }
 function render() {
-  if (!start) { $("label").textContent = "Ready"; $("clock").textContent = fmt(P[0].sec); $("bar").style.width = "0";
-                $("go").style.display = ""; $("stop").style.display = "none"; return; }
-  let t = (Date.now() - start) / 1000;
-  $("go").style.display = "none"; $("stop").style.display = "";
-  $("bar").style.width = Math.min(100, 100 * t / total) + "%";
+  const running = !!st;
+  $("go").style.display = running ? "none" : ""; $("pause").style.display = running ? "" : "none";
+  $("stop").style.display = running ? "" : "none";
+  if (!running) { $("label").textContent = "Ready"; $("clock").textContent = fmt(P[0].sec); if (!dragging) $("seek").value = 0; return; }
+  const t = pos();
+  $("pause").textContent = st.paused !== null ? "Resume" : "Pause";
+  if (!dragging) $("seek").value = Math.min(t, total);
   if (t >= total) { if (played < P.length) { play("finish"); played = P.length; }
-                    $("label").textContent = "Complete"; $("clock").textContent = "00:00"; stop(false); return; }
-  let i = 0; while (t >= P[i].sec) { t -= P[i].sec; i++; }
-  if (i > played) { if (played >= 0 || t < 3) play(P[i].cue); played = i; }  // after a reload, don't replay an old cue
-  $("label").textContent = P[i].label; $("clock").textContent = fmt(P[i].sec - t);
+                    $("label").textContent = "Complete"; $("clock").textContent = "00:00"; finish(); return; }
+  const [i, into] = phaseAt(t);
+  if (i > played) { if (played >= 0 || into < 3) play(P[i].cue); played = i; }  // after a reload or a jump, no old cues
+  $("label").textContent = P[i].label + (st.paused !== null ? " · paused" : "");
+  $("clock").textContent = fmt(P[i].sec - into);
 }
-function stop(reset) { clearInterval(tick); tick = null; save(null); if (reset) musicStop(); else setTimeout(musicStop, 8000); if (reset) { start = null; played = -1; render(); }
-                       else { start = null; $("go").style.display = ""; $("stop").style.display = "none"; } }
-$("go").onclick = () => { start = Date.now(); played = -1; save(start); musicPlay(); render(); tick = setInterval(render, 500); };
+function finish() { clearInterval(tick); tick = null; st = null; save(); setTimeout(musicPause, 8000);
+                    $("go").style.display = ""; $("pause").style.display = "none"; $("stop").style.display = "none"; }
+$("go").onclick = () => { st = {start: Date.now(), paused: null}; played = -1; save(); musicPlay(); render();
+                          if (!tick) tick = setInterval(render, 500); };
+$("pause").onclick = () => {
+  if (!st) return;
+  if (st.paused === null) { st.paused = pos(); musicPause(); }
+  else { st.start = Date.now() - st.paused * 1000; st.paused = null; musicPlay(); }
+  save(); render();
+};
+$("stop").onclick = () => { clearInterval(tick); tick = null; st = null; played = -1; save(); musicPause();
+                            if (music) music.currentTime = 0; render(); };
+$("seek").oninput = () => { dragging = true; if (st) { const [i, into] = phaseAt(+$("seek").value);
+                            $("clock").textContent = fmt(P[i].sec - into); $("label").textContent = P[i].label; } };
+$("seek").onchange = () => {
+  dragging = false;
+  const v = +$("seek").value;
+  if (!st) st = {start: Date.now(), paused: 0};  // moving the slider before Begin starts paused at that point
+  if (st.paused !== null) st.paused = v; else st.start = Date.now() - v * 1000;
+  played = phaseAt(v)[0];  // a jump doesn't replay the cue for where you land
+  save(); render(); if (!tick) tick = setInterval(render, 500);
+};
 if (music) {
   $("mtoggle").onclick = () => { musicOn = !musicOn; $("mtoggle").textContent = musicOn ? "Music on" : "Music off";
-                                 musicOn && start ? musicPlay() : music.pause(); };
+                                 musicOn ? musicPlay() : musicPause(); };
   $("mvol").oninput = () => { music.volume = vol(); };
   // after a reload mid-meditation the browser needs a click before sound can play again
-  document.getElementById("t").addEventListener("click", () => { if (start && musicOn && music.paused) musicPlay(); });
+  $("t").addEventListener("click", () => { if (music && music.paused) musicPlay(); });
 }
-$("stop").onclick = () => stop(true);
-render(); if (start) tick = setInterval(render, 500);
+if (st) { played = phaseAt(pos())[0]; tick = setInterval(render, 500); }
+render();
 </script>
 """
