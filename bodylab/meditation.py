@@ -133,6 +133,40 @@ def compose_music(prompt: str, seconds: int = MUSIC_SECONDS) -> bytes | None:
     return resp.content
 
 
+def _sessions_path(pid: str):
+    from pathlib import Path
+
+    if not pid.isalnum():
+        raise ValueError("Invalid participant ID")
+    return Path(SETTINGS.lakehouse_dir) / "mindfulness" / f"{pid}.json"
+
+
+def load_sessions(pid: str) -> list[dict]:
+    """Meditations this person marked as finished: [{"practice": ..., "at": iso time}]."""
+    path = _sessions_path(pid)
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+
+
+def record_session(pid: str, practice: str) -> list[dict]:
+    import pandas as pd
+
+    sessions = load_sessions(pid) + [{"practice": practice, "at": pd.Timestamp.now().isoformat()}]
+    path = _sessions_path(pid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(sessions, indent=2), encoding="utf-8")
+    return sessions
+
+
+MINDFUL_QUEST_TARGET = 2
+
+
+def mindful_quest(sessions: list[dict]) -> dict:
+    """The Stress lab's mindfulness quest, in the same shape as the agent's quests."""
+    done = min(len(sessions), MINDFUL_QUEST_TARGET)
+    return {"quest_id": "QM", "lab": "stress", "title": "Calm a stressful day: finish two guided meditations in Mindfulness",
+            "progress": done, "target": MINDFUL_QUEST_TARGET, "done": done >= MINDFUL_QUEST_TARGET}
+
+
 VISUALIZATION_LENGTHS = {"Short (~2 min)": 250, "Longer (~4 min)": 450}
 
 

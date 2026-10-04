@@ -147,7 +147,9 @@ def sherlock_leads(quests: list[dict], now: pd.Timestamp) -> None:
         @media (max-width:640px) {{ .st-key-sherlock-mascot {{ right:10px; bottom:12px; }} }}
         </style>''', unsafe_allow_html=True)
     with st.container(key="sherlock-mascot"):
-        with st.popover("New lead", help="Open Sherlock's celebrity-inspired cases"):
+        n_leads = len(celebrity_cases.suggest(celebrity_features, now, nb.hypotheses, quests))
+        label = f"{n_leads} new lead{'s' if n_leads != 1 else ''}" if n_leads else "Sherlock"
+        with st.popover(label, help="Open Sherlock's celebrity-inspired cases"):
             st.markdown("### A lead from Sherlock")
             notice = st.session_state.pop(f"celebrity_notice_{pid}", None)
             if notice:
@@ -574,6 +576,9 @@ def mindfulness_tab() -> None:
             st.caption(prepared["note"])
         elif not any(prepared["audio"].values()):
             st.caption("No voice yet: the timer runs silently until ElevenLabs is set up.")
+        if st.button("I finished this meditation", key=f"med_done_{practice.key}"):
+            meditation.record_session(pid, practice.key)
+            st.success("Nice. Logged toward your Stress quest.")
         with st.expander("What you'll hear"):
             for c in meditation.cue_names(practice, n):
                 st.markdown(f"**{'Check-in' if c == 'checkin' else c.title()}** · {prepared['cues'][c]}")
@@ -615,8 +620,8 @@ def mindfulness_tab() -> None:
             st.write(made["text"])
 
 
-tab_today, tab_case, tab_disc, tab_nb, tab_chat, tab_mind = st.tabs(
-    ["Today", "Cases", "Findings", "Casebook", "💬 Ask Sherlock Howls", "Mindfulness"])
+tab_today, tab_case, tab_disc, tab_nb, tab_quests, tab_chat, tab_mind = st.tabs(
+    ["Today", "Cases", "Findings", "Casebook", "Quests", "💬 Ask Sherlock Howls", "Mindfulness"])
 with tab_mind:
     mindfulness_tab()
 
@@ -631,7 +636,7 @@ if eng.until is None:
                 card('<div class="bl-label">Quests · optional</div><div class="bl-sub">No quests currently</div>')
             for q in celebrity_quests:
                 card('<div class="bl-label">Quest · optional</div>' + celebrity_quest_body(q))
-    for tab in (tab_case, tab_disc, tab_nb, tab_chat):
+    for tab in (tab_case, tab_disc, tab_nb, tab_quests, tab_chat):
         with tab:
             st.caption("Start the replay to open your casebook.")
     st.stop()
@@ -646,6 +651,32 @@ def signals_frame(pid: str, until: str) -> pd.DataFrame:
 sig_df = signals_frame(pid, str(eng.until))
 
 # ---------------------------------------------------------------- Today
+def _with_kind(q: dict, kind: str) -> tuple[str, dict]:
+    return kind, q
+
+
+stress_active = any(h["lab"] == "stress" and h["status"] in ("testing", "fading", "confirmed") for h in nb.hypotheses)
+all_quests = ([_with_kind(q, "agent") for q in nb.derived_quests(eng.features, now)]
+              + ([_with_kind(meditation.mindful_quest(meditation.load_sessions(pid)), "mindful")] if stress_active else [])
+              + [_with_kind(q, "celebrity") for q in celebrity_quests])
+all_quests.sort(key=lambda kq: bool(kq[1]["done"]))
+
+with tab_quests:
+    st.markdown("## Quests")
+    st.caption("Optional ways to help test what Sherlock Howls is investigating. Progress is tracked automatically.")
+    active = [kq for kq in all_quests if not kq[1]["done"]]
+    finished = [kq for kq in all_quests if kq[1]["done"]]
+    st.markdown(f'<div class="bl-label">In progress · {len(active)}</div>', unsafe_allow_html=True)
+    if not active:
+        st.caption("Nothing in progress right now.")
+    for kind, q in active:
+        card('<div class="bl-label">Quest · optional</div>' + (celebrity_quest_body(q) if kind == "celebrity" else quest_body(q)))
+    st.markdown(f'<div class="bl-label" style="margin-top:14px">Completed · {len(finished)}</div>', unsafe_allow_html=True)
+    if not finished:
+        st.caption("Completed quests will collect here.")
+    for kind, q in finished:
+        card('<div class="bl-label">Quest · completed</div>' + (celebrity_quest_body(q) if kind == "celebrity" else quest_body(q)), "ok")
+
 with tab_today:
     rank, pts, nxt = nb.rank()
     day_start = now.normalize()
@@ -688,29 +719,7 @@ with tab_today:
         card(f'<div class="bl-label">Closed quietly today</div>'
              f'<div>{unexplained} surprise{"s" if unexplained != 1 else ""} with no clear reason · {bad} dismissed as bad data</div>'
              f'<div class="bl-sub">No alerts were sent for these. Details are in the Casebook.</div>')
-    with right:
-        to_next = f"{nxt - pts} points to the next rank" if nxt else "Top rank reached"
-        width = 100 if not nxt else int(pts / nxt * 100)
-        card(f'<div class="bl-label">Detective rank</div><div class="bl-big">{escape(rank)}</div>'
-             f'<div class="bl-sub bl-num">{pts} points · {to_next}</div><div class="bar"><i style="width:{width}%;background:var(--acc)"></i></div>')
-        agent_quests = nb.derived_quests(eng.features, now)
-        if not agent_quests and not celebrity_quests:
-            card('<div class="bl-label">Quests · optional</div><div class="bl-sub">No quests currently</div>')
-        for q in sorted(agent_quests, key=lambda q: bool(q["done"]))[:4]:  # in progress first
-            card('<div class="bl-label">Quest · optional</div>' + quest_body(q))
-        for q in celebrity_quests:
-            card('<div class="bl-label">Quest · optional</div>' + celebrity_quest_body(q))
-        st.markdown('<div class="bl-label">Your labs</div>', unsafe_allow_html=True)
-        lab_cards = []
-        for lab in LABS.values():
-            cards = sum(d["lab"] == lab.key and d["status"] != "rejected" for d in nb.discoveries)
-            open_h = sum(h["lab"] == lab.key and h["status"] == "testing" for h in nb.hypotheses)
-            extra = (f'<div class="bl-sub" title="{escape(EXPLAINER)}" style="cursor:help">stress 1–10, personal ⓘ</div>'
-                     if lab.key == "stress" else "")
-            lab_cards.append(f'<div class="bl-card"><div class="bl-title">{lab.name}</div>'
-                             f'<div class="lab-details"><div class="bl-sub">{lab.situation}s</div>{extra}</div>'
-                             f'<div class="lab-badges">{pill(f"{cards} cards", "p-acc")}{pill(f"{open_h} open", "p-plain")}</div></div>')
-        st.markdown('<div class="lab-grid">' + ''.join(lab_cards) + '</div>', unsafe_allow_html=True)
+        st.markdown('<div class="bl-label" style="margin-top:14px">Weekly recap</div>', unsafe_allow_html=True)
         # The recap is kept in session state: the page reloads by itself when new results arrive (Databricks mode),
         # which would otherwise wipe a recap that only existed on the click's run.
         def _request_recap() -> None:
@@ -740,6 +749,30 @@ with tab_today:
             if st.button("✕ Close recap", key="close_recap"):
                 st.session_state.pop("recap", None)
                 st.rerun()
+        st.markdown('<div class="bl-label" style="margin-top:14px">Your labs</div>', unsafe_allow_html=True)
+        lab_cards = []
+        for lab in LABS.values():
+            cards = sum(d["lab"] == lab.key and d["status"] != "rejected" for d in nb.discoveries)
+            open_h = sum(h["lab"] == lab.key and h["status"] == "testing" for h in nb.hypotheses)
+            extra = (f'<div class="bl-sub" title="{escape(EXPLAINER)}" style="cursor:help">stress 1–10, personal ⓘ</div>'
+                     if lab.key == "stress" else "")
+            lab_cards.append(f'<div class="bl-card"><div class="bl-title">{lab.name}</div>'
+                             f'<div class="lab-details"><div class="bl-sub">{lab.situation}s</div>{extra}</div>'
+                             f'<div class="lab-badges">{pill(f"{cards} cards", "p-acc")}{pill(f"{open_h} open", "p-plain")}</div></div>')
+        st.markdown('<div class="lab-grid">' + ''.join(lab_cards) + '</div>', unsafe_allow_html=True)
+    with right:
+        to_next = f"{nxt - pts} points to the next rank" if nxt else "Top rank reached"
+        width = 100 if not nxt else int(pts / nxt * 100)
+        card(f'<div class="bl-label">Detective rank</div><div class="bl-big">{escape(rank)}</div>'
+             f'<div class="bl-sub bl-num">{pts} points · {to_next}</div><div class="bar"><i style="width:{width}%;background:var(--acc)"></i></div>')
+        in_progress = [kq for kq in all_quests if not kq[1]["done"]]
+        if not in_progress:
+            card('<div class="bl-label">Quests · optional</div><div class="bl-sub">No quests in progress. Completed ones are in the Quests tab.</div>')
+        for kind, q in in_progress[:4]:
+            card('<div class="bl-label">Quest · optional</div>' + (celebrity_quest_body(q) if kind == "celebrity" else quest_body(q)))
+        done_count = len(all_quests) - len(in_progress)
+        if done_count:
+            st.caption(f"{done_count} completed quest{'s' if done_count != 1 else ''} in the Quests tab.")
 
 # ---------------------------------------------------------------- Case
 def _text(value) -> str:
