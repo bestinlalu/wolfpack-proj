@@ -54,7 +54,7 @@ h1, h2, h3 { font-family: 'Bricolage Grotesque', system-ui, sans-serif !importan
 .pattern-evidence { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:10px; }
 .pattern-evidence .dots { display:flex; flex-wrap:wrap; gap:4px; }
 .pattern-evidence .dots i { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; margin:0; color:#fff; font:700 11px sans-serif; font-style:normal; }
-.pattern-evidence .dots i.c { border-radius:3px; }
+.pattern-evidence .dots i.c { border-radius:50%; }
 .check::before { content: "✓"; color: var(--ok); font-weight: 700; margin-right: 8px; } .fail::before { content: "✕"; color: var(--glu); font-weight: 700; margin-right: 8px; }
 </style>
 """, unsafe_allow_html=True)
@@ -71,16 +71,34 @@ def pill(text: str, cls: str) -> str:
     return f'<span class="pill {cls}">{escape(text)}</span>'
 
 
-def pattern_body(h: dict, *, show_name: bool = False) -> str:
+def quest_body(q: dict) -> str:
+    badges = pill(LABS[q["lab"]].name, LAB_PILL[q["lab"]])
+    badges += pill("Completed" if q["done"] else "Tracking automatically", "p-ok" if q["done"] else "p-acc")
+    dots = "".join(f'<i class="{"s" if i < q["progress"] else ""}"></i>' for i in range(int(q["target"])))
+    return (badges + f'<div class="bl-title">{escape(q["title"])}</div>'
+            f'<div class="pattern-evidence"><span class="dots">{dots}</span>'
+            f'<span class="bl-sub">{q["progress"]} of {q["target"]}</span></div>')
+
+
+def pattern_body(h: dict, *, show_name: bool = False, update: dict | None = None) -> str:
     status_cls = {"testing": "p-plain", "confirmed": "p-ok", "fading": "p-warn", "rejected": "p-glu"}
     badges = pill(LABS[h["lab"]].name, LAB_PILL[h["lab"]]) + pill(patterns.STATUS[h["status"]], status_cls.get(h["status"], "p-plain"))
-    if h["status"] in ("testing", "confirmed", "fading"):
+    if h["status"] in ("testing", "fading"):
         badges += pill("Tracking automatically", "p-acc")
-    title = patterns.name(h) if show_name else patterns.question(h)
-    body = badges + f'<div class="bl-title">{escape(title)}</div>'
+    wording = patterns.question(h)
+    if h["status"] == "confirmed":
+        wording = patterns.statement(h)
+    title = patterns.name(h) if show_name else wording
+    timestamp = f'<div class="bl-label" style="float:right">{pd.Timestamp(update["ts"]):%a %H:%M}</div>' if update else ""
+    body = timestamp + badges + f'<div class="bl-title">{escape(title)}</div>'
     if show_name:
-        body += f'<div class="bl-sub">{escape(patterns.question(h))}</div>'
+        body += f'<div class="bl-sub">{escape(wording)}</div>'
     reason = patterns.origin(h, nb.events)
+    if update and h["status"] == "confirmed":
+        from bodylab.engine import effect_text
+        discovery = next((d for d in nb.discoveries if d["hyp_id"] == h["hyp_id"]), None)
+        if discovery:
+            reason = effect_text(discovery) or reason
     if reason and not show_name:
         body += f'<div class="bl-sub">{escape(reason)}</div>'
     evidence = [e for e in nb.evidence if e["hyp_id"] == h["hyp_id"] and e["verdict"] in ("supports", "contradicts")]
@@ -285,10 +303,19 @@ with st.sidebar:
                 st.success("Added at the current replay time.")
     st.caption("Body Lab reports what was different, never causes. Not medical advice.")
 
+tab_today, tab_case, tab_disc, tab_nb, tab_chat = st.tabs(["Today", "Case", "Discoveries", "Notebook", "💬 Ask Body Lab"])
+
 if eng.until is None:
-    st.title("Body Lab")
-    st.markdown(f"Hi {escape(user.name)}. Your data runs from **{eng.start:%b %d}** to **{eng.end:%b %d}**. "
-                "Use the replay controls on the left to stream it through the agent.")
+    with tab_today:
+        st.title("Body Lab")
+        st.markdown(f"Hi {escape(user.name)}. Your data runs from **{eng.start:%b %d}** to **{eng.end:%b %d}**. "
+                    "Use the replay controls on the left to stream it through the agent.")
+        _, quest_area = st.columns([3, 2], gap="large")
+        with quest_area:
+            card('<div class="bl-label">Quests · optional</div><div class="bl-sub">No quests currently</div>')
+    for tab in (tab_case, tab_disc, tab_nb, tab_chat):
+        with tab:
+            st.caption("Start the replay to see your lab.")
     st.stop()
 
 
@@ -300,29 +327,47 @@ def signals_frame(pid: str, until: str) -> pd.DataFrame:
 
 sig_df = signals_frame(pid, str(eng.until))
 
-tab_today, tab_case, tab_disc, tab_nb, tab_chat = st.tabs(["Today", "Case", "Discoveries", "Notebook", "💬 Ask Body Lab"])
-
 # ---------------------------------------------------------------- Today
 with tab_today:
     rank, pts, nxt = nb.rank()
+    day_start = now.normalize()
     st.markdown(f"## Hi, {escape(user.name)}")
     st.caption(f"{now:%A, %b %d, %H:%M} in the replay")
     left, right = st.columns([3, 2], gap="large")
     with left:
-        feed = sorted(nb.messages, key=lambda m: pd.Timestamp(m["ts"]), reverse=True)
+        feed = sorted([m for m in nb.messages if day_start <= pd.Timestamp(m["ts"]) <= now],
+                      key=lambda m: pd.Timestamp(m["ts"]), reverse=True)
         if not feed:
-            card('<div class="bl-label">Nothing to report yet</div><div class="bl-sub">The agent only writes when it has an answer: a solved case or a confirmed discovery.</div>')
-        for m in feed[:6]:
+            card('<div class="bl-label">No updates today</div><div class="bl-sub">New possible links and pattern updates will appear here.</div>')
+        seen_patterns = set()
+        displayed = 0
+        for m in feed:
+            if displayed >= 6:
+                break
             kind = m["kind"]
-            cls, label = {"discovery": ("ok", ("Discovery confirmed", "p-ok")), "case": ("glu", ("Case solved", "p-glu")),
-                          "rejected": ("", ("Not confirmed", "p-plain")), "fading": ("", ("Fading", "p-warn"))}[kind]
+            ref = m.get("ref")
+            event = next((e for e in nb.events if e["event_id"] == ref), None) if kind == "case" else None
+            discovery = next((d for d in nb.discoveries if d["card_id"] == ref), None) if kind == "discovery" else None
+            hyp_id = event.get("hyp_id") if event else discovery["hyp_id"] if discovery else ref
+            h = next((h for h in nb.hypotheses if h["hyp_id"] == hyp_id), None)
+            if h:
+                if h["hyp_id"] in seen_patterns:
+                    continue
+                seen_patterns.add(h["hyp_id"])
+                card(pattern_body(h, update=m))
+                displayed += 1
+                continue
+            cls, label = {"discovery": ("ok", ("Confirmed", "p-ok")), "case": ("glu", ("Possible link", "p-plain")),
+                          "rejected": ("", ("Denied", "p-glu")), "fading": ("", ("Mixed evidence", "p-warn"))}[kind]
+            title = m["title"].replace("Not confirmed:", "Denied:").replace("Fading:", "Mixed evidence:").replace("Case solved", "Possible link")
             card(f'{pill(label[0], label[1])}{pill(LABS[m["lab"]].name, LAB_PILL[m["lab"]])}'
                  f'<span class="bl-sub bl-num" style="float:right">{pd.Timestamp(m["ts"]):%a %H:%M}</span>'
-                 f'<div class="bl-title">{escape(m["title"])}</div><div class="bl-sub">{escape(m["body"])}</div>', cls)
-        week = [e for e in nb.events if pd.Timestamp(e["ts"]) > now - pd.Timedelta(days=7)]
-        unexplained = sum(e["verdict"] == "unexplained" for e in week)
-        bad = sum(e["verdict"] == "bad_data" for e in week)
-        card(f'<div class="bl-label">Closed quietly this week</div>'
+                 f'<div class="bl-title">{escape(title)}</div><div class="bl-sub">{escape(m["body"])}</div>', cls)
+            displayed += 1
+        today_events = [e for e in nb.events if day_start <= pd.Timestamp(e.get("end_ts", e["ts"])) <= now]
+        unexplained = sum(e["verdict"] == "unexplained" for e in today_events)
+        bad = sum(e["verdict"] == "bad_data" for e in today_events)
+        card(f'<div class="bl-label">Closed quietly today</div>'
              f'<div>{unexplained} surprise{"s" if unexplained != 1 else ""} with no clear reason · {bad} dismissed as bad data</div>'
              f'<div class="bl-sub">No alerts were sent for these. Details are in the Notebook.</div>')
     with right:
@@ -330,11 +375,10 @@ with tab_today:
         width = 100 if not nxt else int(pts / nxt * 100)
         card(f'<div class="bl-label">Scientist rank</div><div class="bl-big">{escape(rank)}</div>'
              f'<div class="bl-sub bl-num">{pts} points · {to_next}</div><div class="bar"><i style="width:{width}%;background:var(--acc)"></i></div>')
+        if not nb.quests:
+            card('<div class="bl-label">Quests · optional</div><div class="bl-sub">No quests currently</div>')
         for q in nb.quests[-2:]:
-            dots = "".join(f'<i class="{"s" if i < q["progress"] else ""}"></i>' for i in range(int(q["target"])))
-            progress_text = "Done" if q["done"] else f'{q["progress"]} of {q["target"]}'
-            card(f'<div class="bl-label">Quest · optional, detected automatically</div><div class="bl-title">{escape(q["title"])}</div>'
-                 f'<div class="dots">{dots}</div><div class="bl-sub">{progress_text}</div>')
+            card('<div class="bl-label">Quest · optional</div>' + quest_body(q))
         st.markdown('<div class="bl-label">Your labs</div>', unsafe_allow_html=True)
         cols = st.columns(2)
         for i, lab in enumerate(LABS.values()):
@@ -395,8 +439,19 @@ with tab_case:
     if not cases:
         st.info("No surprises investigated yet.")
     else:
-        verdict_label = {"lead": "Solved", "unexplained": "Unexplained", "bad_data": "Bad data"}
-        options = {e["event_id"]: f'{verdict_label.get(e["verdict"], e["verdict"])} · {LABS[e["lab"]].name} · {pd.Timestamp(e["ts"]):%a %b %d %H:%M} · {e["title"][:70]}' for e in cases}
+        verdict_label = {"lead": "Possible link", "unexplained": "No clear link", "bad_data": "Bad data"}
+        def case_hypothesis(event):
+            return next((h for h in nb.hypotheses if h["hyp_id"] == event.get("hyp_id")), None)
+
+        def case_label(event):
+            h = case_hypothesis(event)
+            return patterns.STATUS[h["status"]] if h else verdict_label.get(event["verdict"], event["verdict"])
+
+        def case_title(event):
+            h = case_hypothesis(event)
+            return (patterns.statement(h) if h["status"] == "confirmed" else patterns.question(h)) if h else event["title"]
+
+        options = {e["event_id"]: f'{case_label(e)} · {LABS[e["lab"]].name} · {pd.Timestamp(e["ts"]):%a %b %d %H:%M} · {case_title(e)[:90]}' for e in cases}
         keys = list(options)
         leads = [e["event_id"] for e in cases if e["verdict"] == "lead"]
         fuel_leads = [e["event_id"] for e in cases if e["verdict"] == "lead" and e["lab"] == "fuel"]
@@ -405,10 +460,17 @@ with tab_case:
         ev = nb.event(pick)
         lab = ev["lab"]
         L = LABS[lab]
-        st.markdown(f'{pill(L.name + " Lab", LAB_PILL[lab])}{pill(verdict_label.get(ev["verdict"], ev["verdict"]), {"lead": "p-glu", "unexplained": "p-plain", "bad_data": "p-warn"}[ev["verdict"]])}'
+        h = case_hypothesis(ev)
+        label_cls = {"Confirmed": "p-ok", "Mixed evidence": "p-warn", "Denied": "p-glu", "Bad data": "p-warn"}.get(case_label(ev), "p-plain")
+        st.markdown(f'{pill(L.name + " Lab", LAB_PILL[lab])}{pill(case_label(ev), label_cls)}'
                     f'<span class="bl-sub bl-num">{escape(ev["event_id"])} · agent: {escape(str(ev.get("agent", "")))}</span>', unsafe_allow_html=True)
-        st.markdown(f"### {escape(ev['title'] or 'Case')}")
-        st.markdown(f'<div class="bl-sub" style="font-size:15px">{escape(ev["message"])}</div>', unsafe_allow_html=True)
+        st.markdown(f"### {escape(case_title(ev) or 'Case')}")
+        if h:
+            st.caption(f"Observation · {pd.Timestamp(ev['ts']):%a %b %d, %H:%M}")
+            with st.expander("Explanation at the time"):
+                st.write(ev["message"])
+        else:
+            st.markdown(f'<div class="bl-sub" style="font-size:15px">{escape(ev["message"])}</div>', unsafe_allow_html=True)
 
         c1, c2 = st.columns([3, 2], gap="large")
         with c1:
@@ -454,7 +516,7 @@ with tab_case:
                 st.caption(EXPLAINER)
             h = next((x for x in nb.hypotheses if x["hyp_id"] == ev.get("hyp_id")), None)
             if h:
-                card('<div class="bl-label">Step 3 · Possible pattern</div>' + pattern_body(h), "acc")
+                card('<div class="bl-label">Step 3 · Link status</div>' + pattern_body(h), "acc")
 
 # ---------------------------------------------------------------- Discoveries
 with tab_disc:
@@ -467,7 +529,7 @@ with tab_disc:
     items = sorted(shown, key=lambda d: ({"legendary": 0, "rare": 1, "common": 2}[d["rarity"]], str(d["confirmed_at"])))
     for i, d in enumerate(items):
         pcls, ccls = RARITY_PILL[d["rarity"]]
-        status = pill("Fading", "p-warn") if d["status"] == "fading" else ""
+        status = pill(patterns.STATUS[d["status"]], "p-warn" if d["status"] == "fading" else "p-ok")
         with cols[i % 3]:
             card(f'{pill(d["rarity"].title() + " · " + LABS[d["lab"]].name, pcls)}{status}'
                  f'<h3 style="margin:8px 0 4px;font-size:18px">{escape(d["title"])}</h3><div class="bl-sub">{escape(d["claim"])}</div>'
@@ -479,19 +541,36 @@ with tab_disc:
             card(pattern_body(h, show_name=True), "locked")
     rejected = [d for d in nb.discoveries if d["status"] == "rejected"]
     if rejected:
-        st.caption("Withdrawn after newer data disagreed: " + ", ".join(d["title"] for d in rejected))
+        st.caption("Denied after newer data disagreed: " + ", ".join(d["title"] for d in rejected))
 
 # ---------------------------------------------------------------- Notebook
 with tab_nb:
     st.markdown("## The agent's lab notebook")
-    c1, c2 = st.columns([3, 2], gap="large")
+    c1, c2 = st.columns(2, gap="large")
+    order = {"testing": 0, "fading": 1, "confirmed": 2, "inconclusive": 3, "expired": 4, "rejected": 5}
+    unconfirmed = sorted([h for h in nb.hypotheses if h["status"] != "confirmed"], key=lambda h: (order[h["status"]], h["hyp_id"]))
+    confirmed = sorted([h for h in nb.hypotheses if h["status"] == "confirmed"], key=lambda h: h["hyp_id"])
     with c1:
-        order = {"testing": 0, "fading": 1, "confirmed": 2, "inconclusive": 3, "expired": 4, "rejected": 5}
-        testing = [h for h in nb.hypotheses if h["status"] == "testing"]
-        st.markdown(f'<div class="bl-label">Possible patterns · {len(testing)} still checking</div>', unsafe_allow_html=True)
-        for h in sorted(nb.hypotheses, key=lambda h: (order[h["status"]], h["hyp_id"])):
+        st.markdown(f"### Unconfirmed · {len(unconfirmed)}")
+        active = [h for h in unconfirmed if h["status"] in ("testing", "fading")]
+        closed = [h for h in unconfirmed if h["status"] not in ("testing", "fading")]
+        for h in active:
             card(pattern_body(h))
+        if not active:
+            st.caption("No patterns being checked right now.")
+        if closed:
+            with st.expander(f"Closed patterns · {len(closed)}"):
+                for h in closed:
+                    card(pattern_body(h))
     with c2:
+        st.markdown(f"### Confirmed · {len(confirmed)}")
+        for h in confirmed:
+            card(pattern_body(h))
+        if not confirmed:
+            st.caption("No confirmed patterns yet.")
+
+    summary, watched = st.columns(2, gap="large")
+    with summary:
         f = nb.funnel()
         top = max(f["surprises"], 1)
         rows = [("Surprising events", f["surprises"], "var(--ink3)"), ("Bad data, dismissed", f["bad_data"], "var(--warn)"),
@@ -501,6 +580,7 @@ with tab_nb:
         for name, n, color in rows:
             html += f'<div style="display:flex;justify-content:space-between;margin-top:8px"><span>{name}</span><span class="bl-num">{n}</span></div><div class="bar" style="height:8px"><i style="width:{n / top * 100:.0f}%;background:{color}"></i></div>'
         card(html + '<div class="bl-sub" style="margin-top:10px">Most surprises are noise or bad data. Only repeated patterns become discoveries.</div>')
+    with watched:
         processed = len(nb.processed)
         good = sum(bool(p.get("good_data", True)) for p in nb.processed)
         card(f'<div class="bl-label">Situations watched</div><div class="bl-big bl-num">{processed}</div>'
