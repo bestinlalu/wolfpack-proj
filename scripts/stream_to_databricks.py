@@ -142,6 +142,7 @@ def main() -> None:
     print("Connecting to the Databricks SQL warehouse (it may take up to a minute to wake up)...")
     wh = Warehouse()
     p = wh.prefix
+    wh.store.sync_users(load_users())  # sign-in list in Databricks, independent of agent results
     data = {}
     for pid in pids:
         minute, meals = load(args.source, pid, wh, local)

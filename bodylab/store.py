@@ -32,6 +32,13 @@ class LocalStore:
     def pids(self) -> list[str]:
         return sorted(p.name for p in self.root.iterdir() if (p / "minute.parquet").exists())
 
+    def users(self) -> list:
+        """Users from bodylab/users.json whose participant is prepared on this laptop."""
+        from bodylab.users import load_users
+
+        prepared = set(self.pids())
+        return [u for u in load_users() if u.pid in prepared]
+
     def write_inputs(self, pid: str, minute: pd.DataFrame, meals: pd.DataFrame) -> None:
         minute.to_parquet(self._p(pid, "minute"), index=False)
         meals.to_parquet(self._p(pid, "meals"), index=False)
@@ -114,6 +121,41 @@ class DatabricksSqlStore:
 
     def pids(self) -> list[str]:
         return sorted(self._q("agent_state")["pid"].unique().tolist())
+
+    def users(self) -> list:
+        """Sign-in list from the `users` table, independent of agent results (falls back to bodylab/users.json)."""
+        from bodylab.users import User, load_users
+
+        try:
+            df = self._q("users")
+        except Exception:
+            return load_users()
+        if df.empty:
+            return load_users()
+        return [User(username=r.username, name=r.name, pid=r.pid, email=r.email or "")
+                for r in df.sort_values("pid").itertuples()]
+
+    def sync_users(self, users: list) -> None:
+        """Create `users` if needed and upsert every user from bodylab/users.json (no passwords are stored)."""
+        def lit(v: str) -> str:
+            return "'" + str(v or "").replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+        table = f"{self.catalog}.{self.schema}.users"
+        values = ", ".join(f"({lit(u.username)}, {lit(u.name)}, {lit(u.pid)}, {lit(u.email)})" for u in users)
+        self._run(f"CREATE TABLE IF NOT EXISTS {table} (username STRING, name STRING, pid STRING, email STRING)")
+        self._run(f"MERGE INTO {table} t USING (SELECT * FROM VALUES {values} AS s(username, name, pid, email)) s "
+                  "ON t.username = s.username WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *")
+
+    def _run(self, statement: str) -> None:
+        for attempt in range(2):
+            try:
+                with self.conn.cursor() as cur:
+                    cur.execute(statement)
+                return
+            except Exception:
+                if attempt:
+                    raise
+                self.conn = self._connect()
 
     def signature(self) -> str:
         """One small query that changes whenever the agent saves new results for anyone."""

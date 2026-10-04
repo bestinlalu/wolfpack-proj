@@ -25,7 +25,7 @@ from bodylab.labs import LABS  # noqa: E402
 from bodylab.pipeline.features import Signals  # noqa: E402
 from bodylab.store import open_store  # noqa: E402
 from bodylab.stress_scale import EXPLAINER, band  # noqa: E402
-from bodylab.users import authenticate, find_by_email, load_users, password_required  # noqa: E402
+from bodylab.users import authenticate, find_by_email, password_required  # noqa: E402
 
 st.set_page_config(page_title="Sherlock Howls", page_icon="🐺", layout="wide")
 
@@ -194,9 +194,9 @@ def get_store():
 
 
 # Cached reads are keyed by the results signature, so new agent results are picked up as soon as it changes.
-@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Checking for participants…")
-def _cached_pids(_store, signature: str) -> list[str]:
-    return _store.pids()
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading users…")
+def _cached_users(_store) -> list:
+    return _store.users()
 
 
 @st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your wristband and glucose data…")
@@ -210,7 +210,7 @@ def _cached_state(_store, pid: str, signature: str):
 
 
 def clear_cache() -> None:
-    for fn in (_cached_pids, _cached_inputs, _cached_state):
+    for fn in (_cached_users, _cached_inputs, _cached_state):
         fn.clear()
 
 
@@ -218,7 +218,6 @@ def clear_cache() -> None:
 store = get_store()
 REFRESH_SECONDS = float(os.getenv("BODYLAB_REFRESH_SECONDS", "2"))
 results_signature = store.signature() if store.read_only else ""
-read_pids = (lambda: _cached_pids(store, results_signature)) if store.read_only else store.pids
 read_inputs = (lambda p: _cached_inputs(store, p, results_signature)) if store.read_only else store.read_inputs
 read_state = (lambda p: _cached_state(store, p, results_signature)) if store.read_only else store.read_state
 
@@ -233,21 +232,9 @@ if store.read_only:
     with st.sidebar:
         live_updates(results_signature)
 
-pids = read_pids()
-if not pids:
-    st.title("Sherlock Howls")
-    if store.read_only:
-        st.info("No results in Databricks yet. Start `04_run_agent` (or `05_batch_all`); this page updates by itself "
-                "as soon as results arrive.")
-        if st.button("Refresh"):
-            clear_cache()
-            st.rerun()
-    else:
-        st.info("No participants yet. Prepare data first:\n\n`python scripts/prepare.py --synthetic` (demo data) or "
-                "`python scripts/prepare.py --pid 001` after downloading the BIG IDEAs files.")
-    st.stop()
-
-users = [u for u in load_users() if u.pid in pids]
+# Sign-in list: in Databricks mode the `users` table (all users, whether or not the agent has results for them yet);
+# locally, users whose participant is prepared on this laptop.
+users = _cached_users(store) if store.read_only else store.users()
 if not users:
     st.title("Sherlock Howls")
     st.info("No user in bodylab/users.json has prepared data yet. Prepare a participant listed there, "
