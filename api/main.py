@@ -16,10 +16,12 @@ from pydantic import BaseModel, Field
 from bodylab.agent.chat import BodyLabChat
 from bodylab.config import gemini_api_key
 from bodylab.labs import LABS
+from bodylab import patterns
+from bodylab.engine import effect_text
 from bodylab.store import open_store
 from bodylab.users import authenticate, load_users, password_required
 
-app = FastAPI(title="Body Lab API", version="1.1.0")
+app = FastAPI(title="Sherlock Howls API", version="1.2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
 # Mobile presentation name requested by the product UI. The underlying lab key remains
@@ -89,6 +91,20 @@ def lab_payload(nb) -> list[dict]:
 
 
 
+def hypothesis_payload(h: dict, nb) -> dict:
+    item = clean(dict(h))
+    item["lab_name"] = LAB_NAMES.get(h.get("lab"), h.get("lab"))
+    item["status_label"] = patterns.STATUS.get(h.get("status"), h.get("status"))
+    item["question"] = patterns.question(h)
+    item["statement"] = patterns.statement(h)
+    item["pattern_name"] = patterns.name(h)
+    item["display_title"] = item["statement"] if h.get("status") == "confirmed" else item["question"]
+    item["origin"] = patterns.origin(h, nb.events)
+    evidence = [e for e in nb.evidence if e.get("hyp_id") == h.get("hyp_id") and e.get("verdict") != "neutral"]
+    item["evidence"] = clean([dict(e) for e in evidence[-10:]])
+    return item
+
+
 # Demo authentication. Tokens live only in server memory and are invalidated when
 # the API restarts. Each token is bound to exactly one participant.
 SESSIONS: dict[str, dict[str, Any]] = {}
@@ -139,7 +155,7 @@ def login(req: LoginRequest):
             detail="BODYLAB_DEMO_PASSWORD is not configured",
         )
 
-    users = load_users()
+    users = open_store().users()
     user = authenticate(users, req.username, req.password)
 
     if user is None:
@@ -182,19 +198,38 @@ def today(pid: str, session: dict[str, Any] = Depends(current_session)):
     authorize_pid(pid, session)
     _, _, _, _, nb, now, agent = load_participant(pid)
     rank, points, next_rank = nb.rank()
-    feed = sorted(nb.messages, key=lambda m: pd.Timestamp(m["ts"]), reverse=True)[:6]
-    week = [e for e in nb.events if pd.Timestamp(e["ts"]) > now - pd.Timedelta(days=7)]
-    unexplained = sum(e.get("verdict") == "unexplained" for e in week)
-    bad_data = sum(e.get("verdict") == "bad_data" for e in week)
+    day_start = now.normalize()
+    feed = [m for m in nb.messages if day_start <= pd.Timestamp(m["ts"]) <= now]
+    feed.sort(key=lambda m: pd.Timestamp(m["ts"]), reverse=True)
+    # Browser de-duplicates updates that belong to the same hypothesis.
+    seen, messages = set(), []
+    for m in feed:
+        if len(messages) >= 6:
+            break
+        item = clean(dict(m))
+        kind, ref = m.get("kind"), m.get("ref")
+        event = next((e for e in nb.events if e.get("event_id") == ref), None) if kind == "case" else None
+        discovery = next((d for d in nb.discoveries if d.get("card_id") == ref), None) if kind == "discovery" else None
+        hyp_id = event.get("hyp_id") if event else discovery.get("hyp_id") if discovery else ref
+        h = next((x for x in nb.hypotheses if x.get("hyp_id") == hyp_id), None)
+        if h:
+            if h.get("hyp_id") in seen:
+                continue
+            seen.add(h.get("hyp_id"))
+            hp = hypothesis_payload(h, nb)
+            if h.get("status") == "confirmed" and discovery:
+                hp["origin"] = effect_text(discovery) or hp.get("origin")
+            item["pattern"] = hp
+        messages.append(item)
+    today_events = [e for e in nb.events if day_start <= pd.Timestamp(e.get("end_ts", e["ts"])) <= now]
+    unexplained = sum(e.get("verdict") == "unexplained" for e in today_events)
+    bad_data = sum(e.get("verdict") == "bad_data" for e in today_events)
     return clean({
-        "participant_id": pid,
-        "as_of": now,
-        "agent": agent,
+        "participant_id": pid, "as_of": now, "agent": agent,
         "rank": {"name": rank, "points": points, "next_rank_points": next_rank},
-        "messages": feed,
+        "messages": messages,
         "closed_quietly": {"unexplained": unexplained, "bad_data": bad_data},
-        "quests": list(nb.quests[-2:]),
-        "labs": lab_payload(nb),
+        "quests": list(nb.quests[-2:]), "labs": lab_payload(nb),
     })
 
 
@@ -202,9 +237,15 @@ def today(pid: str, session: dict[str, Any] = Depends(current_session)):
 def cases(pid: str, session: dict[str, Any] = Depends(current_session)):
     authorize_pid(pid, session)
     _, _, _, _, nb, _, _ = load_participant(pid)
-    items = list(nb.events)
-    items.sort(key=lambda e: pd.Timestamp(e.get("ts")), reverse=True)
-    return {"cases": rows(items)}
+    items = []
+    for ev in sorted(nb.events, key=lambda e: pd.Timestamp(e.get("ts")), reverse=True):
+        item = clean(dict(ev))
+        h = next((x for x in nb.hypotheses if x.get("hyp_id") == ev.get("hyp_id")), None)
+        item["lab_name"] = LAB_NAMES.get(ev.get("lab"), ev.get("lab"))
+        item["status_label"] = patterns.STATUS.get(h.get("status")) if h else {"lead":"Possible link","unexplained":"No clear link","bad_data":"Bad data"}.get(ev.get("verdict"), ev.get("verdict"))
+        item["display_title"] = (patterns.statement(h) if h and h.get("status") == "confirmed" else patterns.question(h)) if h else ev.get("title")
+        items.append(item)
+    return {"cases": items}
 
 
 @app.get("/api/case/{pid}/{event_id}")
@@ -219,8 +260,10 @@ def case_detail(pid: str, event_id: str, session: dict[str, Any] = Depends(curre
     item["differences"] = clean(parse_json(ev.get("differences_json"), []))
     item["tools"] = clean(parse_json(ev.get("tools_json"), []))
     h = next((h for h in nb.hypotheses if h.get("hyp_id") == ev.get("hyp_id")), None)
-    item["hypothesis"] = clean(dict(h)) if h else None
+    item["hypothesis"] = hypothesis_payload(h, nb) if h else None
     item["lab_name"] = LAB_NAMES.get(ev.get("lab"), ev.get("lab"))
+    item["status_label"] = patterns.STATUS.get(h.get("status")) if h else {"lead":"Possible link","unexplained":"No clear link","bad_data":"Bad data"}.get(ev.get("verdict"), ev.get("verdict"))
+    item["display_title"] = (patterns.statement(h) if h and h.get("status") == "confirmed" else patterns.question(h)) if h else ev.get("title")
     return {"case": item}
 
 
@@ -235,9 +278,13 @@ def discoveries(pid: str, session: dict[str, Any] = Depends(current_session)):
     testing_close = [h for h in nb.hypotheses if h.get("status") == "testing" and (h.get("supports") or 0) >= 2]
     rejected = [d.get("title") for d in nb.discoveries if d.get("status") == "rejected"]
     payload = rows(shown)
+    originals = {d.get("card_id"): d for d in shown}
     for d in payload:
         d["lab_name"] = LAB_NAMES.get(d.get("lab"), d.get("lab"))
-    return {"discoveries": payload, "counts": counts, "close": rows(testing_close), "rejected_titles": rejected}
+        d["status_label"] = patterns.STATUS.get(d.get("status"), d.get("status"))
+        original = originals.get(d.get("card_id"), d)
+        d["effect_text"] = effect_text(original) or ""
+    return {"discoveries": payload, "counts": counts, "close": [hypothesis_payload(h, nb) for h in testing_close], "rejected_titles": rejected}
 
 
 @app.get("/api/notebook/{pid}")
@@ -246,12 +293,7 @@ def notebook(pid: str, session: dict[str, Any] = Depends(current_session)):
     _, _, _, _, nb, _, _ = load_participant(pid)
     order = {"testing": 0, "fading": 1, "confirmed": 2, "inconclusive": 3, "expired": 4, "rejected": 5}
     hyps = sorted(nb.hypotheses, key=lambda h: (order.get(h.get("status"), 9), h.get("hyp_id", "")))
-    payload = []
-    for h in hyps:
-        item = clean(dict(h))
-        item["lab_name"] = LAB_NAMES.get(h.get("lab"), h.get("lab"))
-        item["evidence"] = clean([dict(e) for e in nb.evidence if e.get("hyp_id") == h.get("hyp_id") and e.get("verdict") != "neutral"][-10:])
-        payload.append(item)
+    payload = [hypothesis_payload(h, nb) for h in hyps]
     testing = [h for h in nb.hypotheses if h.get("status") == "testing"]
     return clean({
         "hypotheses": payload,
@@ -283,5 +325,5 @@ def chat(req: ChatRequest, session: dict[str, Any] = Depends(current_session)):
         bot = BodyLabChat(notebook=nb, features=features, until=until)
         answer = bot.ask(req.message, [m.model_dump() for m in req.history])
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Ask Body Lab failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"Ask Sherlock Howls failed: {exc}") from exc
     return {"answer": answer, "as_of": clean(until)}

@@ -1,212 +1,61 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator, KeyboardAvoidingView, Platform, Pressable,
-  ScrollView, StyleSheet, Text, TextInput, View,
-} from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
-const API = (process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
-const LAB_NAME = { fuel: 'Fuel', stress: 'Stress', movement: 'Rhythm', sleep: 'Sleep' };
+const API=(process.env.EXPO_PUBLIC_API_URL||'http://127.0.0.1:8000').replace(/\/$/,'');
+let AUTH_TOKEN='';
+async function request(path,options={}){const r=await fetch(`${API}${path}`,{...options,headers:{'Content-Type':'application/json',...(AUTH_TOKEN?{Authorization:`Bearer ${AUTH_TOKEN}`}:{ }),...(options.headers||{})}});let d={};try{d=await r.json();}catch{}if(!r.ok)throw new Error(d.detail||`Request failed (${r.status})`);return d;}
+const dt=v=>v?new Date(v):null;
+const short=v=>dt(v)?.toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'})||'';
+const time=v=>dt(v)?.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})||'';
+const full=v=>dt(v)?.toLocaleString([],{weekday:'long',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})||'';
+const toneFor=s=>s==='Confirmed'?'ok':s==='Mixed evidence'?'warn':s==='Denied'?'danger':s==='Bad data'?'warn':'plain';
+function Loading(){return <ActivityIndicator style={{marginTop:50}}/>} function Err({children}){return children?<Text style={S.error}>{children}</Text>:null}
+function Pill({children,tone='plain'}){return <View style={[S.pill,S[`pill_${tone}`]]}><Text style={[S.pillText,S[`pillText_${tone}`]]}>{children}</Text></View>}
+function Card({children,style}){return <View style={[S.card,style]}>{children}</View>}
+function Rule(){return <View style={S.rule}/>}
+function Section({children}){return <Text style={S.section}>{children}</Text>}
+function Brand(){return <View style={S.brandWrap}><View style={S.logoMark}><Text style={S.logoWolf}>🐺</Text><Text style={S.logoGlass}>⌕</Text></View><View><Text style={S.brand}>Sherlock Howls</Text><Text style={S.tag}>Your body leaves clues.</Text></View></View>}
 
-let AUTH_TOKEN = '';
+function Login({onLogin}){const[u,setU]=useState(''),[p,setP]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');const go=async()=>{if(!u.trim()||!p)return;setBusy(true);setError('');try{const d=await request('/api/auth/login',{method:'POST',body:JSON.stringify({username:u.trim(),password:p})});AUTH_TOKEN=d.token;onLogin(d.user)}catch(e){setError(e.message)}finally{setBusy(false)}};return <KeyboardAvoidingView style={S.login} behavior={Platform.OS==='ios'?'padding':undefined}><View style={S.loginBox}><Brand/><Text style={S.loginLead}>Sign in to open your casebook.</Text><Text style={S.label}>USERNAME</Text><TextInput style={S.inputBox} value={u} onChangeText={setU} autoCapitalize="none" autoCorrect={false} placeholder="Enter your username"/><Text style={S.label}>PASSWORD</Text><TextInput style={S.inputBox} value={p} onChangeText={setP} secureTextEntry placeholder="Enter your password" onSubmitEditing={go}/><Err>{error}</Err><Pressable style={S.primary} onPress={go} disabled={busy}>{busy?<ActivityIndicator color="#fff"/>:<Text style={S.primaryText}>Sign in</Text>}</Pressable><Text style={S.small}>Each account is mapped to one participant.</Text></View></KeyboardAvoidingView>}
+function Header({user,onSignOut,onSync,syncing,lastSynced}){return <View style={S.header}><Brand/><View style={{alignItems:'flex-end'}}><Text style={S.user}>{user.name}</Text><View style={S.headerActions}><Pressable onPress={onSync} disabled={syncing}><Text style={S.link}>{syncing?'Syncing…':'Sync'}</Text></Pressable><Text style={S.headerDot}>·</Text><Pressable onPress={onSignOut}><Text style={S.link}>Sign out</Text></Pressable></View>{lastSynced?<Text style={S.syncMeta}>Last synced {lastSynced.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}</Text>:null}</View></View>}
 
-async function request(path, options = {}) {
-  const res = await fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : {}), ...(options.headers || {}) },
-    ...options,
-  });
-  let data = {};
-  try { data = await res.json(); } catch (_) {}
-  if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
-  return data;
-}
+function PatternCard({p,update}){if(!p)return null;return <Card style={S.pattern}><View style={S.row}><Text style={S.caseNo}>CASE FILE · {p.hyp_id}</Text>{update?.ts?<Text style={S.meta}>{short(update.ts)} · {time(update.ts)}</Text>:null}</View><View style={S.pills}><Pill>{p.lab_name}</Pill><Pill tone={toneFor(p.status_label)}>{p.status_label}</Pill>{['testing','fading'].includes(p.status)?<Pill tone="accent">Tracking automatically</Pill>:null}</View><Text style={S.cardTitle}>{p.display_title}</Text>{p.origin?<Text style={S.muted}>{p.origin}</Text>:null}<Text style={S.evidence}>{p.supports||0} matched · {p.contradicts||0} didn’t match</Text></Card>}
+function Feed({m}){if(m.pattern)return <PatternCard p={m.pattern} update={m}/>;const label={discovery:'Confirmed',case:'Possible link',rejected:'Denied',fading:'Mixed evidence'}[m.kind]||m.kind;return <Card><View style={S.pills}><Pill tone={toneFor(label)}>{label}</Pill><Pill>{m.lab_name||m.lab}</Pill></View><Text style={S.cardTitle}>{String(m.title||'').replace('Not confirmed:','Denied:').replace('Fading:','Mixed evidence:').replace('Case solved','Possible link')}</Text><Text style={S.muted}>{m.body}</Text></Card>}
+function Labs({labs}){const labTone=k=>k==='fuel'?'glucose':k==='stress'?'warn':k==='sleep'?'accent':k==='movement'?'ok':'plain';return <View style={S.labGrid}>{(labs||[]).map(l=><View key={l.key} style={S.lab}><Text style={S.labTitle}>{l.name}</Text><Text style={S.muted}>{l.situation}s</Text>{l.key==='stress'?<Text style={S.small}>stress 1–10, personal ⓘ</Text>:null}<View style={[S.pills,{marginTop:'auto'}]}><Pill tone={labTone(l.key)}>{l.cards} cards</Pill><Pill>{l.open} open</Pill></View></View>)}</View>}
+function Today({pid,user,refreshKey,onLoaded}){const[d,setD]=useState(null),[e,setE]=useState('');useEffect(()=>{request(`/api/today/${pid}`).then(setD).catch(x=>setE(x.message))},[pid,refreshKey]);useEffect(()=>{if(d)onLoaded?.()},[d]);if(!d&&!e)return <Loading/>;const r=d?.rank||{};return <ScrollView contentContainerStyle={S.content}><Text style={S.title}>Daily briefing</Text><Text style={S.sub}>{user.name} · {full(d?.as_of)} in the replay</Text><Err>{e}</Err><Section>New clues today</Section>{d?.messages?.length?d.messages.map((m,i)=><Feed key={i} m={m}/>):<Card><Text style={S.label}>NO NEW CLUES TODAY</Text><Text style={S.muted}>New possible links and pattern updates will appear here.</Text></Card>}<Card><Text style={S.label}>CLOSED QUIETLY TODAY</Text><Text style={S.body}>{d?.closed_quietly?.unexplained||0} surprise{d?.closed_quietly?.unexplained===1?'':'s'} with no clear reason · {d?.closed_quietly?.bad_data||0} dismissed as bad data</Text><Text style={S.muted}>No alerts were sent for these. Details are in the Casebook.</Text></Card><Section>Detective rank</Section><Card><Text style={S.big}>{r.name}</Text><Text style={S.muted}>{r.points} points · {r.next_rank_points?`${r.next_rank_points-r.points} points to the next rank`:'Top rank reached'}</Text></Card><Section>Quests · optional</Section>{d?.quests?.length?d.quests.map((q,i)=><Card key={i}><View style={S.pills}><Pill>{q.lab}</Pill><Pill tone={q.done?'ok':'accent'}>{q.done?'Completed':'Tracking automatically'}</Pill></View><Text style={S.cardTitle}>{q.title}</Text><Text style={S.evidence}>{q.progress} of {q.target}</Text></Card>):<Card><Text style={S.muted}>No quests currently</Text></Card>}<Section>Your labs</Section><Labs labs={d?.labs}/></ScrollView>}
 
-const fmtShortDate = value => value ? new Date(value).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
-const fmtDateTime = value => value ? new Date(value).toLocaleString([], { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }) : '';
-const titleDate = value => value ? new Date(value).toLocaleDateString([], { weekday:'long', month:'long', day:'numeric' }) : 'Today';
+function Cases({pid,refreshKey,onLoaded}){const[list,setList]=useState(null),[id,setId]=useState(null),[detail,setDetail]=useState(null),[e,setE]=useState('');useEffect(()=>{request(`/api/cases/${pid}`).then(x=>setList(x.cases)).catch(x=>setE(x.message))},[pid,refreshKey]);useEffect(()=>{if(list)onLoaded?.()},[list]);useEffect(()=>{if(id){setDetail(null);request(`/api/case/${pid}/${encodeURIComponent(id)}`).then(x=>setDetail(x.case)).catch(x=>setE(x.message))}},[id,pid]);if(!list&&!e)return <Loading/>;if(id)return <ScrollView contentContainerStyle={S.content}><Pressable onPress={()=>{setId(null);setDetail(null)}}><Text style={S.link}>‹ Cases</Text></Pressable>{!detail?<Loading/>:<><View style={S.pills}><Pill>{detail.lab_name} Lab</Pill><Pill tone={toneFor(detail.status_label)}>{detail.status_label}</Pill></View><Text style={S.title}>{detail.display_title||detail.title}</Text><Text style={S.sub}>Observation · {full(detail.ts)}</Text>{detail.hypothesis?<Card><Text style={S.label}>EXPLANATION AT THE TIME</Text><Text style={S.body}>{detail.message}</Text></Card>:<Text style={S.body}>{detail.message}</Text>}<Text style={S.meta}>{detail.event_id} · agent: {detail.agent||''}</Text>{detail.tools?.length?<Card><Text style={S.label}>AGENT STEPS</Text><Text style={S.body}>{detail.tools.join(' → ')}</Text></Card>:null}{detail.checks?.length?<Card><Text style={S.label}>STEP 1 · DATA CHECK</Text>{detail.checks.map((c,i)=><View key={i} style={S.check}><Text style={{color:c.passed?C.ok:C.danger,fontWeight:'900'}}>{c.passed?'✓':'×'}</Text><Text style={S.body}><Text style={{fontWeight:'800'}}>{c.check}: </Text>{c.detail}</Text></View>)}</Card>:null}{detail.differences?.length?<Card><Text style={S.label}>STEP 2 · WHAT WAS DIFFERENT</Text>{detail.differences.slice(0,5).map((x,i)=><View key={i} style={{gap:4}}><View style={S.row}><Text style={S.cardTitle}>{x.label}</Text><Pill tone={x.level==='very unusual'?'danger':x.level==='somewhat'?'warn':'plain'}>{x.level}</Pill></View><Text style={S.muted}>this time {x.this_time_text??x.this_time} · typical {x.typical_text??x.similar_median}</Text></View>)}</Card>:null}{detail.hypothesis?<><Section>Step 3 · Link status</Section><PatternCard p={detail.hypothesis}/></>:null}</>}</ScrollView>;return <ScrollView contentContainerStyle={S.content}><Text style={S.title}>Cases</Text><Err>{e}</Err>{list?.length?list.map(x=><Pressable key={x.event_id} style={S.card} onPress={()=>setId(x.event_id)}><View style={S.row}><View style={S.pills}><Pill>{x.lab_name}</Pill><Pill tone={toneFor(x.status_label)}>{x.status_label}</Pill></View><Text style={S.meta}>{short(x.ts)}</Text></View><Text style={S.cardTitle}>{x.display_title||x.title}</Text><Text style={S.link}>Open case ›</Text></Pressable>):<Card><Text style={S.muted}>No cases investigated yet.</Text></Card>}</ScrollView>}
 
-function Loading() { return <ActivityIndicator style={styles.loader} />; }
-function ErrorText({ children }) { return children ? <Text style={styles.error}>{children}</Text> : null; }
-function SectionTitle({ children }) { return <Text style={styles.sectionTitle}>{children}</Text>; }
-function Pill({ children, tone='plain' }) { return <View style={[styles.pill, styles[`pill_${tone}`]]}><Text style={styles.pillText}>{children}</Text></View>; }
-function Card({ children, style }) { return <View style={[styles.card, style]}>{children}</View>; }
-function Divider() { return <View style={styles.divider}/>; }
+function Findings({pid,refreshKey,onLoaded}){const[d,setD]=useState(null),[e,setE]=useState('');useEffect(()=>{request(`/api/discoveries/${pid}`).then(setD).catch(x=>setE(x.message))},[pid,refreshKey]);useEffect(()=>{if(d)onLoaded?.()},[d]);if(!d&&!e)return <Loading/>;return <ScrollView contentContainerStyle={S.content}><Text style={S.title}>Findings · {d?.discoveries?.length||0} collected</Text><Err>{e}</Err><View style={S.pills}><Pill tone="gold">Legendary {d?.counts?.legendary||0}</Pill><Pill tone="accent">Rare {d?.counts?.rare||0}</Pill><Pill>Common {d?.counts?.common||0}</Pill></View>{d?.discoveries?.map((x,i)=><Card key={x.card_id||i} style={x.status==='fading'?S.fading:null}><View style={S.pills}><Pill tone={x.rarity==='legendary'?'gold':x.rarity==='rare'?'accent':'plain'}>{x.rarity?.[0]?.toUpperCase()+x.rarity?.slice(1)} · {x.lab_name}</Pill><Pill tone={x.status==='fading'?'warn':'ok'}>{x.status_label}</Pill></View><Text style={S.cardTitle}>{x.title}</Text><Text style={S.muted}>{x.claim}</Text>{x.effect_text?<Text style={S.big}>{x.effect_text}</Text>:null}<Text style={S.evidence}>{x.evidence}</Text></Card>)}{d?.close?.map((h,i)=><PatternCard key={`c${i}`} p={h}/>)}{d?.rejected_titles?.length?<Text style={S.muted}>Denied after newer data disagreed: {d.rejected_titles.join(', ')}</Text>:null}</ScrollView>}
 
-function Header({ user, onSignOut }) {
-  return <View style={styles.header}>
-    <View><Text style={styles.brand}>BODY LAB</Text><Text style={styles.tagline}>your personal scientist</Text></View>
-    <Pressable onPress={onSignOut} style={styles.account}><Text style={styles.accountName}>{user?.name}</Text><Text style={styles.signOut}>Sign out</Text></Pressable>
-  </View>;
-}
+function Hyp({h}){const[open,setOpen]=useState(false);return <Pressable onPress={()=>setOpen(!open)}><PatternCard p={h}/>{open?<Card style={{marginTop:-7}}><Text style={S.label}>EVIDENCE LOG · {h.hyp_id}</Text>{h.evidence?.length?h.evidence.map((x,i)=><Text key={i} style={S.muted}>{short(x.ts)} · {x.verdict==='supports'?'Matched':x.verdict==='contradicts'?"Didn't match":'No clear result'}</Text>):<Text style={S.muted}>No comparisons recorded yet.</Text>}</Card>:null}</Pressable>}
+function Casebook({pid,refreshKey,onLoaded}){const[d,setD]=useState(null),[e,setE]=useState('');useEffect(()=>{request(`/api/notebook/${pid}`).then(setD).catch(x=>setE(x.message))},[pid,refreshKey]);useEffect(()=>{if(d)onLoaded?.()},[d]);if(!d&&!e)return <Loading/>;const un=(d?.hypotheses||[]).filter(h=>h.status!=='confirmed'),con=(d?.hypotheses||[]).filter(h=>h.status==='confirmed'),f=d?.funnel||{};return <ScrollView contentContainerStyle={S.content}><Text style={S.title}>Casebook</Text><Err>{e}</Err><Section>Unconfirmed · {un.length}</Section>{un.length?un.map(h=><Hyp key={h.hyp_id} h={h}/>):<Text style={S.muted}>No open investigations.</Text>}<Section>Confirmed · {con.length}</Section>{con.length?con.map(h=><Hyp key={h.hyp_id} h={h}/>):<Text style={S.muted}>No confirmed patterns yet.</Text>}<Section>Every surprise so far</Section><Card>{[['Surprising events','surprises'],['Bad data, dismissed','bad_data'],['No clear reason','unexplained'],['Became leads','leads'],['Confirmed discoveries','discoveries']].map(([l,k],i)=><React.Fragment key={k}><View style={S.row}><Text style={S.body}>{l}</Text><Text style={S.stat}>{f[k]||0}</Text></View>{i<4?<Rule/>:null}</React.Fragment>)}<Text style={S.muted}>Most surprises are noise or bad data. Only repeated patterns become discoveries.</Text></Card><Card><Text style={S.label}>SITUATIONS WATCHED</Text><Text style={S.big}>{d?.situations_watched||0}</Text><Text style={S.muted}>{d?.situations_good_data||0} passed the data check and counted as natural experiments.</Text></Card></ScrollView>}
 
-function Login({ onLogin }) {
-  const [username,setUsername]=useState(''); const [password,setPassword]=useState(''); const [error,setError]=useState(''); const [busy,setBusy]=useState(false);
-  const submit=async()=>{if(!username.trim()||!password)return;setBusy(true);setError('');try{const d=await request('/api/auth/login',{method:'POST',body:JSON.stringify({username:username.trim(),password})});AUTH_TOKEN=d.token;onLogin(d.user);}catch(e){setError(e.message);}finally{setBusy(false);}};
-  return <KeyboardAvoidingView style={styles.loginPage} behavior={Platform.OS==='ios'?'padding':undefined}><View style={styles.loginCard}><Text style={styles.loginBrand}>BODY LAB</Text><Text style={styles.loginTitle}>Welcome back</Text><Text style={styles.loginSub}>Sign in to your personal lab.</Text><Text style={styles.inputLabel}>Username</Text><TextInput value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} placeholder="Enter your username" style={styles.loginInput}/><Text style={styles.inputLabel}>Password</Text><TextInput value={password} onChangeText={setPassword} secureTextEntry placeholder="Enter your password" style={styles.loginInput} onSubmitEditing={submit}/><ErrorText>{error}</ErrorText><Pressable onPress={submit} disabled={busy} style={[styles.loginButton,busy&&{opacity:.65}]}>{busy?<ActivityIndicator color="#fff"/>:<Text style={styles.loginButtonText}>Sign in</Text>}</Pressable></View></KeyboardAvoidingView>;
-}
+function Chat({pid}){const starters=['What have you learned about me so far?','Which hypothesis has the strongest evidence?','Have any of your ideas been proven wrong?','What should Sherlock Howls investigate next?'];const[m,setM]=useState([]),[text,setText]=useState(''),[busy,setBusy]=useState(false);const ref=useRef(null);const send=async raw=>{const q=(raw??text).trim();if(!q||busy)return;const hist=m.slice(-8),next=[...m,{role:'user',content:q}];setM(next);setText('');setBusy(true);try{const d=await request('/api/chat',{method:'POST',body:JSON.stringify({participant_id:pid,message:q,history:hist})});setM([...next,{role:'assistant',content:d.answer}])}catch(e){setM([...next,{role:'assistant',content:`I couldn't query the Sherlock Howls notebook right now. ${e.message}`}])}finally{setBusy(false)}};return <KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined} keyboardVerticalOffset={80}><ScrollView ref={ref} contentContainerStyle={S.content} onContentSizeChange={()=>ref.current?.scrollToEnd({animated:true})}><Text style={S.title}>Ask Sherlock Howls</Text><Text style={S.sub}>Ask about patterns, discoveries, hypotheses, and cases Sherlock Howls has actually observed in your data.</Text>{!m.length?<><Section>Try asking</Section>{starters.map(q=><Pressable key={q} style={S.card} onPress={()=>send(q)}><Text style={S.body}>{q}</Text></Pressable>)}</>:null}{m.map((x,i)=><View key={i} style={[S.bubble,x.role==='user'?S.userBubble:S.botBubble]}><Text style={[S.body,x.role==='user'&&{color:'#fff'}]}>{x.content}</Text></View>)}{busy?<ActivityIndicator/>:null}</ScrollView><View style={S.composer}><TextInput style={S.chatInput} value={text} onChangeText={setText} placeholder="Ask about your Sherlock Howls data…" multiline/><Pressable style={S.send} onPress={()=>send()}><Text style={{color:'#fff',fontSize:20}}>↑</Text></Pressable></View></KeyboardAvoidingView>}
 
-function LabGrid({ labs }) {
-  if (!labs?.length) return null;
-  return <View style={styles.labGrid}>{labs.map(l => <View key={l.key} style={styles.labCard}>
-    <Text style={styles.labName}>{l.name}</Text>
-    <Text style={styles.labSituation}>{l.situation}s</Text>
-    {l.key === 'stress' ? <Text style={styles.labNote}>stress 1–10, personal</Text> : null}
-    <View style={styles.labFooter}><Text style={styles.labCount}>{l.cards} cards</Text><Text style={styles.labOpen}>{l.open} open</Text></View>
-  </View>)}</View>;
-}
+const TABS=[['today','Today','●'],['cases','Cases','◇'],['findings','Findings','★'],['casebook','Casebook','▤'],['chat','Ask','◉']];
+function Nav({tab,setTab}){return <View style={S.nav}>{TABS.map(([k,l,i])=><Pressable key={k} style={S.navItem} onPress={()=>setTab(k)}><Text style={[S.navIcon,tab===k&&S.active]}>{i}</Text><Text style={[S.navLabel,tab===k&&S.active]}>{l}</Text></Pressable>)}</View>}
+export default function App(){const[user,setUser]=useState(null),[tab,setTab]=useState('today'),[refreshKey,setRefreshKey]=useState(0),[syncing,setSyncing]=useState(false),[lastSynced,setLastSynced]=useState(null);const sync=()=>{if(!user)return;setSyncing(true);setRefreshKey(k=>k+1)};const loaded=()=>{setSyncing(false);setLastSynced(new Date())};useEffect(()=>{if(!user)return;sync();const timer=setInterval(sync,2000);const sub=AppState.addEventListener('change',state=>{if(state==='active')sync()});return()=>{clearInterval(timer);sub.remove()}},[user]);if(!user)return <View style={S.safe}><StatusBar style="dark"/><Login onLogin={u=>{setUser(u);setLastSynced(null)}}/></View>;const pid=user.participant_id;const common={pid,refreshKey,onLoaded:loaded};const screens={today:<Today {...common} user={user}/>,cases:<Cases {...common}/>,findings:<Findings {...common}/>,casebook:<Casebook {...common}/>,chat:<Chat pid={pid}/>};return <View style={S.safe}><StatusBar style="dark"/><Header user={user} onSync={sync} syncing={syncing} lastSynced={lastSynced} onSignOut={()=>{AUTH_TOKEN='';setUser(null);setTab('today');setRefreshKey(0);setLastSynced(null)}}/><View style={{flex:1}}>{screens[tab]}</View><Nav tab={tab} setTab={setTab}/></View>}
 
-function FeedCard({ item }) {
-  const [open, setOpen] = useState(false);
-  const kind = item.kind === 'discovery' ? 'Discovery confirmed' : item.kind === 'case' ? 'Case solved' : item.kind === 'rejected' ? 'Not confirmed' : 'Fading';
-  const tone = item.kind === 'discovery' ? 'ok' : item.kind === 'case' ? 'case' : 'plain';
-  return <Pressable onPress={() => setOpen(v => !v)} style={({pressed}) => [styles.feedCard, pressed && styles.pressed]}>
-    <View style={styles.feedMeta}><View style={styles.feedMetaLeft}><Pill tone={tone}>{kind}</Pill><Text style={styles.feedLab}>{LAB_NAME[item.lab] || item.lab}</Text></View><Text style={styles.feedDate}>{fmtShortDate(item.ts)}</Text></View>
-    <Text style={styles.feedTitle} numberOfLines={open ? undefined : 2}>{item.title}</Text>
-    {open ? <><Text style={styles.feedBody}>{item.body}</Text><Text style={styles.collapse}>Tap to collapse</Text></> : <Text style={styles.expand}>View details  ›</Text>}
-  </Pressable>;
-}
-
-function Today({ pid }) {
-  const [data,setData]=useState(null); const [error,setError]=useState('');
-  useEffect(()=>{ request(`/api/today/${pid}`).then(setData).catch(e=>setError(e.message)); },[pid]);
-  if (!data && !error) return <Loading/>;
-  const rank=data?.rank || {};
-  return <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-    <Text style={styles.pageTitle}>{titleDate(data?.as_of)}</Text><ErrorText>{error}</ErrorText>
-
-    <SectionTitle>Your labs</SectionTitle>
-    <LabGrid labs={data?.labs}/>
-
-    <SectionTitle>Recent</SectionTitle>
-    {data?.messages?.length ? data.messages.map((m,i)=><FeedCard key={`${m.ts}-${i}`} item={m}/>) : <Card><Text style={styles.eyebrow}>NOTHING TO REPORT YET</Text><Text style={styles.body}>The agent only writes when it has an answer: a solved case or a confirmed discovery.</Text></Card>}
-
-    {data && <Card><Text style={styles.eyebrow}>CLOSED QUIETLY THIS WEEK</Text><Text style={styles.body}>{data.closed_quietly.unexplained} surprise{data.closed_quietly.unexplained===1?'':'s'} with no clear reason · {data.closed_quietly.bad_data} dismissed as bad data</Text><Text style={styles.muted}>No alerts were sent for these. Details are in the Notebook.</Text></Card>}
-
-    {data && <><SectionTitle>Detective rank</SectionTitle><Card><View style={styles.rankRow}><Text style={styles.rankName}>{rank.name}</Text><Text style={styles.rankPoints}>{rank.points} points</Text></View><Text style={styles.muted}>{rank.next_rank_points ? `${rank.next_rank_points-rank.points} points to the next rank` : 'Top rank reached'}</Text></Card></>}
-
-    {data?.quests?.length ? <><SectionTitle>Quests</SectionTitle>{data.quests.map((q,i)=><Card key={i}><Text style={styles.eyebrow}>OPTIONAL · DETECTED AUTOMATICALLY</Text><Text style={styles.compactTitle}>{q.title}</Text><Text style={styles.body}>{q.done?'Done':`${q.progress} of ${q.target}`}</Text></Card>)}</> : null}
-  </ScrollView>;
-}
-
-function CaseListItem({ item, selected, onPress }) {
-  const verdict = item.verdict==='lead'?'Solved':item.verdict==='unexplained'?'Unexplained':item.verdict==='bad_data'?'Bad data':item.verdict;
-  return <Pressable onPress={onPress} style={({pressed})=>[styles.listCard, selected&&styles.listCardSelected, pressed&&styles.pressed]}>
-    <View style={styles.listTop}><Text style={styles.listMeta}>{(LAB_NAME[item.lab]||item.lab).toUpperCase()} · {String(verdict).toUpperCase()}</Text><Text style={styles.listDate}>{fmtShortDate(item.ts)}</Text></View>
-    <Text style={styles.listTitle} numberOfLines={2}>{item.title || item.message || 'Case'}</Text>
-    <Text style={styles.expand}>View case  ›</Text>
-  </Pressable>;
-}
-
-function Cases({ pid }) {
-  const [items,setItems]=useState(null); const [selected,setSelected]=useState(null); const [detail,setDetail]=useState(null); const [error,setError]=useState('');
-  useEffect(()=>{ request(`/api/cases/${pid}`).then(d=>setItems(d.cases)).catch(e=>setError(e.message)); },[pid]);
-  useEffect(()=>{ if(selected) request(`/api/case/${pid}/${encodeURIComponent(selected)}`).then(d=>setDetail(d.case)).catch(e=>setError(e.message)); },[pid,selected]);
-  if (!items && !error) return <Loading/>;
-  const verdict = v => v==='lead'?'Solved':v==='unexplained'?'Unexplained':v==='bad_data'?'Bad data':v;
-
-  if (selected) return <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-    <Pressable onPress={()=>{setSelected(null);setDetail(null);}}><Text style={styles.back}>‹ Cases</Text></Pressable>
-    {!detail ? <Loading/> : <>
-      <View style={styles.detailMeta}><Pill tone="accent">{detail.lab_name} Lab</Pill><Pill tone={detail.verdict==='lead'?'case':'plain'}>{verdict(detail.verdict)}</Pill></View>
-      <Text style={styles.detailTitle}>{detail.title || 'Case'}</Text>
-      <Text style={styles.detailLead}>{detail.message}</Text>
-      <Text style={styles.detailId}>{detail.event_id} · agent: {detail.agent || ''}</Text>
-      {detail.tools?.length ? <DetailSection label="AGENT STEPS"><Text style={styles.body}>{detail.tools.join(' → ')}</Text></DetailSection> : null}
-      {detail.checks?.length ? <DetailSection label="STEP 1 · DATA CHECK">{detail.checks.map((c,i)=><View key={i} style={styles.detailLine}><Text style={[styles.checkMark,c.passed?styles.pass:styles.fail]}>{c.passed?'✓':'✕'}</Text><View style={styles.detailLineText}><Text style={styles.compactTitle}>{c.check}</Text><Text style={styles.muted}>{c.detail}</Text></View></View>)}</DetailSection> : null}
-      {detail.differences?.length ? <DetailSection label="STEP 2 · WHAT WAS DIFFERENT">{detail.differences.slice(0,5).map((d,i)=><View key={i} style={styles.difference}><View style={styles.listTop}><Text style={styles.compactTitle}>{d.label}</Text><Pill tone={d.level==='very unusual'?'case':d.level==='somewhat'?'warn':'plain'}>{d.level}</Pill></View><Text style={styles.muted}>this time {d.this_time_text ?? d.this_time} · typical {d.typical_text ?? d.similar_median}</Text></View>)}</DetailSection> : null}
-      {detail.hypothesis ? <DetailSection label="STEP 3 · VERDICT"><Text style={styles.compactTitle}>{detail.hypothesis.hyp_id}: {detail.hypothesis.claim}</Text><Text style={styles.body}>Status: {detail.hypothesis.status}</Text><Text style={styles.muted}>{detail.hypothesis.supports} supporting · {detail.hypothesis.contradicts} against</Text></DetailSection> : null}
-    </>}
-  </ScrollView>;
-
-  return <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}><Text style={styles.pageTitle}>Cases</Text><ErrorText>{error}</ErrorText>
-    {!items?.length ? <Text style={styles.body}>No surprises investigated yet.</Text> : items.map(e=><CaseListItem key={e.event_id} item={e} onPress={()=>setSelected(e.event_id)}/>)}
-  </ScrollView>;
-}
-
-function DetailSection({ label, children }) { return <View style={styles.detailSection}><Text style={styles.eyebrow}>{label}</Text><Divider/>{children}</View>; }
-
-function DiscoveryCard({ d }) {
-  const [open,setOpen]=useState(false);
-  return <Pressable onPress={()=>setOpen(v=>!v)} style={({pressed})=>[styles.listCard,d.rarity==='legendary'&&styles.goldEdge,d.rarity==='rare'&&styles.blueEdge,pressed&&styles.pressed]}>
-    <View style={styles.listTop}><Text style={styles.listMeta}>{String(d.rarity).toUpperCase()} · {String(d.lab_name).toUpperCase()}</Text>{d.status==='fading'?<Pill tone="warn">Fading</Pill>:null}</View>
-    <Text style={styles.listTitle}>{d.title}</Text>
-    {d.effect_text ? <Text style={styles.effect}>{d.effect_text}</Text> : null}
-    {open ? <><Text style={styles.body}>{d.claim}</Text><Text style={styles.muted}>{d.evidence}</Text><Text style={styles.collapse}>Tap to collapse</Text></> : <Text style={styles.expand}>View discovery  ›</Text>}
-  </Pressable>;
-}
-
-function Discoveries({ pid }) {
-  const [data,setData]=useState(null); const [error,setError]=useState('');
-  useEffect(()=>{request(`/api/discoveries/${pid}`).then(setData).catch(e=>setError(e.message));},[pid]);
-  if(!data&&!error)return <Loading/>;
-  return <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}><Text style={styles.pageTitle}>Discoveries</Text><Text style={styles.pageSub}>{data?.discoveries?.length||0} collected</Text><ErrorText>{error}</ErrorText>
-    {data && <View style={styles.countRow}><View style={styles.countBox}><Text style={styles.countNum}>{data.counts.legendary}</Text><Text style={styles.countLabel}>Legendary</Text></View><View style={styles.countBox}><Text style={styles.countNum}>{data.counts.rare}</Text><Text style={styles.countLabel}>Rare</Text></View><View style={styles.countBox}><Text style={styles.countNum}>{data.counts.common}</Text><Text style={styles.countLabel}>Common</Text></View></View>}
-    {data?.discoveries?.map((d,i)=><DiscoveryCard key={d.card_id||i} d={d}/>) }
-    {data?.close?.length ? <><SectionTitle>Close to a discovery</SectionTitle>{data.close.map((h,i)=><Card key={`close-${i}`}><Text style={styles.compactTitle}>{LAB_NAME[h.lab]||h.lab} Lab · {h.hyp_id}</Text><Text style={styles.muted}>{Math.max(3-(h.supports||0),1)} test away</Text></Card>)}</> : null}
-    {data?.rejected_titles?.length ? <Text style={styles.muted}>Withdrawn after newer data disagreed: {data.rejected_titles.join(', ')}</Text> : null}
-  </ScrollView>;
-}
-
-function HypothesisCard({ h }) {
-  const [open,setOpen]=useState(false);
-  return <Pressable onPress={()=>setOpen(v=>!v)} style={({pressed})=>[styles.listCard,pressed&&styles.pressed]}>
-    <View style={styles.listTop}><Text style={styles.listMeta}>{h.hyp_id} · {String(h.lab_name).toUpperCase()}</Text><Pill tone={h.status==='confirmed'?'ok':h.status==='rejected'?'case':h.status==='fading'?'warn':'plain'}>{h.status}</Pill></View>
-    <Text style={styles.listTitle}>{h.claim}</Text>
-    <Text style={styles.evidenceLine}>{h.supports} supporting · {h.contradicts} against</Text>
-    {open ? <><Text style={styles.muted}>{h.chances} chances</Text><Text style={styles.collapse}>Tap to collapse</Text></> : <Text style={styles.expand}>View evidence  ›</Text>}
-  </Pressable>;
-}
-
-function Notebook({ pid }) {
-  const [data,setData]=useState(null); const [error,setError]=useState('');
-  useEffect(()=>{request(`/api/notebook/${pid}`).then(setData).catch(e=>setError(e.message));},[pid]);
-  if(!data&&!error)return <Loading/>;
-  const f=data?.funnel||{};
-  return <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}><Text style={styles.pageTitle}>Notebook</Text><Text style={styles.pageSub}>The agent's lab notebook</Text><ErrorText>{error}</ErrorText>
-    {data && <Text style={styles.eyebrow}>HYPOTHESES · {data.open_slots} OF 10 OPEN SLOTS · MEAL-RELATED {data.meal_related_open} OF 2 MAX</Text>}
-    {data?.hypotheses?.map((h,i)=><HypothesisCard key={h.hyp_id||i} h={h}/>) }
-    {data && <><SectionTitle>Every surprise so far</SectionTitle><Card>{[['Surprising events','surprises'],['Bad data, dismissed','bad_data'],['No clear reason','unexplained'],['Became leads','leads'],['Confirmed discoveries','discoveries']].map(([label,key],i)=><React.Fragment key={key}><View style={styles.statRow}><Text style={styles.body}>{label}</Text><Text style={styles.stat}>{f[key]||0}</Text></View>{i<4?<Divider/>:null}</React.Fragment>)}<Text style={styles.muted}>Most surprises are noise or bad data. Only repeated patterns become discoveries.</Text></Card><Card><Text style={styles.eyebrow}>SITUATIONS WATCHED</Text><Text style={styles.rankName}>{data.situations_watched}</Text><Text style={styles.body}>{data.situations_good_data} passed the data check and counted as natural experiments.</Text></Card></>}
-  </ScrollView>;
-}
-
-function Chat({ pid }) {
-  const starters=['What have you learned about me so far?','Which hypothesis has the strongest evidence?','Have any of your ideas been proven wrong?','What should Body Lab investigate next?'];
-  const [messages,setMessages]=useState([]); const [text,setText]=useState(''); const [sending,setSending]=useState(false); const scroll=useRef(null);
-  const send=async raw=>{const message=(raw??text).trim();if(!message||sending)return;const history=messages.slice(-8);const next=[...messages,{role:'user',content:message}];setMessages(next);setText('');setSending(true);try{const d=await request('/api/chat',{method:'POST',body:JSON.stringify({participant_id:pid,message,history})});setMessages([...next,{role:'assistant',content:d.answer}]);}catch(e){setMessages([...next,{role:'assistant',content:`I couldn't query the Body Lab notebook right now. ${e.message}`}]);}finally{setSending(false);setTimeout(()=>scroll.current?.scrollToEnd({animated:true}),50);}};
-  return <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS==='ios'?'padding':undefined} keyboardVerticalOffset={86}><ScrollView ref={scroll} contentContainerStyle={styles.chatContent} onContentSizeChange={()=>scroll.current?.scrollToEnd({animated:true})} showsVerticalScrollIndicator={false}><Text style={styles.pageTitle}>Ask Body Lab</Text><Text style={styles.pageSub}>Ask about patterns, discoveries, hypotheses, and cases Body Lab has actually observed in your data.</Text>{!messages.length?<><Text style={styles.eyebrow}>TRY ASKING</Text>{starters.map(q=><Pressable key={q} style={styles.starter} onPress={()=>send(q)}><Text style={styles.starterText}>{q}</Text><Text style={styles.chevron}>›</Text></Pressable>)}</>:null}{messages.map((m,i)=><View key={i} style={[styles.bubble,m.role==='user'?styles.userBubble:styles.botBubble]}><Text style={[styles.bubbleText,m.role==='user'&&styles.userBubbleText]}>{m.content}</Text></View>)}{sending?<View style={[styles.bubble,styles.botBubble]}><ActivityIndicator/></View>:null}</ScrollView><View style={styles.composer}><TextInput value={text} onChangeText={setText} placeholder="Ask about your Body Lab data…" style={styles.input} multiline/><Pressable onPress={()=>send()} style={styles.send}><Text style={styles.sendText}>↑</Text></Pressable></View></KeyboardAvoidingView>;
-}
-
-const TABS=[{key:'today',label:'Today',icon:'●'},{key:'case',label:'Case',icon:'◇'},{key:'discoveries',label:'Discoveries',icon:'★'},{key:'notebook',label:'Notebook',icon:'▤'},{key:'chat',label:'Ask',icon:'◉'}];
-
-function BottomNav({ tab, setTab }) {
-  return <View style={styles.tabbar}>{TABS.map(t=><Pressable key={t.key} onPress={()=>setTab(t.key)} style={styles.tab}><Text style={[styles.tabIcon,tab===t.key&&styles.tabActive]}>{t.icon}</Text><Text numberOfLines={1} style={[styles.tabLabel,tab===t.key&&styles.tabActive]}>{t.label}</Text></Pressable>)}</View>;
-}
-
-export default function App(){
-  const[tab,setTab]=useState('today'); const[user,setUser]=useState(null);
-  if(!user)return <View style={styles.safe}><StatusBar style="dark"/><Login onLogin={setUser}/></View>;
-  const pid=user.participant_id;
-  const screen=({today:<Today pid={pid}/>,case:<Cases pid={pid}/>,discoveries:<Discoveries pid={pid}/>,notebook:<Notebook pid={pid}/>,chat:<Chat pid={pid}/>})[tab];
-  const signOut=()=>{AUTH_TOKEN='';setUser(null);setTab('today');};
-  return <View style={styles.safe}><StatusBar style="dark"/><Header user={user} onSignOut={signOut}/><View style={styles.screen}>{screen}</View><BottomNav tab={tab} setTab={setTab}/></View>;
-}
-
-const C={ink:'#14292E',text:'#506267',muted:'#879693',line:'#DDE5E2',bg:'#F5F8F7',white:'#FFFFFF',blue:'#315EC9',blueSoft:'#E8EEFC',green:'#2E8558',greenSoft:'#E3F2E9',orange:'#C85B37',orangeSoft:'#FBE9E2',gold:'#9A700B',warn:'#9A6B20'};
-const styles=StyleSheet.create({
-  safe:{flex:1,backgroundColor:C.bg,paddingTop:Platform.OS==='ios'?50:18},screen:{flex:1},flex:{flex:1},
-  header:{height:76,paddingHorizontal:20,flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderBottomWidth:1,borderBottomColor:C.line,backgroundColor:C.white},brand:{fontSize:21,fontWeight:'900',letterSpacing:3.2,color:C.ink},tagline:{fontSize:12,color:C.muted,marginTop:3},account:{alignItems:'flex-end',paddingVertical:6},accountName:{fontSize:12,fontWeight:'800',color:C.ink},signOut:{fontSize:10.5,fontWeight:'700',color:C.blue,marginTop:2},
-  loginPage:{flex:1,justifyContent:'center',paddingHorizontal:24,backgroundColor:C.bg},loginCard:{backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:20,padding:22,gap:9},loginBrand:{fontSize:18,fontWeight:'900',letterSpacing:3,color:C.ink,marginBottom:12},loginTitle:{fontSize:28,fontWeight:'850',color:C.ink,letterSpacing:-.6},loginSub:{fontSize:14,color:C.muted,marginBottom:12},inputLabel:{fontSize:11,fontWeight:'800',color:C.text,marginTop:4},loginInput:{height:46,borderWidth:1,borderColor:C.line,borderRadius:12,paddingHorizontal:13,fontSize:14,color:C.ink,backgroundColor:'#FBFCFC'},loginButton:{height:48,borderRadius:12,backgroundColor:C.ink,alignItems:'center',justifyContent:'center',marginTop:8},loginButtonText:{color:C.white,fontSize:14,fontWeight:'850'},
-  content:{paddingHorizontal:18,paddingTop:20,paddingBottom:28,gap:10},chatContent:{paddingHorizontal:18,paddingTop:20,paddingBottom:18,gap:10},
-  pageTitle:{fontSize:30,lineHeight:35,fontWeight:'850',color:C.ink,letterSpacing:-0.7},pageSub:{fontSize:14,lineHeight:20,color:C.muted,marginTop:-5,marginBottom:4},sectionTitle:{fontSize:15,fontWeight:'800',color:C.ink,marginTop:9,marginBottom:1},
-  card:{backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:14,padding:14,gap:7},pressed:{opacity:.72},divider:{height:1,backgroundColor:'#EDF1EF',marginVertical:5},
-  eyebrow:{fontSize:9.5,fontWeight:'850',letterSpacing:1.15,color:C.muted},body:{fontSize:13.5,lineHeight:19.5,color:C.text},muted:{fontSize:11.5,lineHeight:16.5,color:C.muted},compactTitle:{fontSize:14,fontWeight:'750',lineHeight:19,color:C.ink},error:{color:'#B24747',fontSize:14,lineHeight:20},loader:{marginTop:45},
-  pill:{paddingHorizontal:7,paddingVertical:3,borderRadius:99,backgroundColor:'#F0F4F2'},pill_ok:{backgroundColor:C.greenSoft},pill_case:{backgroundColor:C.orangeSoft},pill_accent:{backgroundColor:C.blueSoft},pill_warn:{backgroundColor:'#F8EDD8'},pill_gold:{backgroundColor:'#F7EFD5'},pill_plain:{backgroundColor:'#F0F4F2'},pillText:{fontSize:9,fontWeight:'800',color:C.text},
-  labGrid:{flexDirection:'row',flexWrap:'wrap',gap:9},labCard:{width:'48.6%',minHeight:118,backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:14,padding:13},labName:{fontSize:17,fontWeight:'850',color:C.ink},labSituation:{fontSize:12.5,lineHeight:17,color:C.text,marginTop:5},labNote:{fontSize:10.5,color:C.muted,marginTop:2},labFooter:{marginTop:'auto',paddingTop:12,flexDirection:'row',justifyContent:'space-between'},labCount:{fontSize:10.5,fontWeight:'750',color:C.blue},labOpen:{fontSize:10.5,color:C.muted},
-  feedCard:{backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:14,padding:14,gap:7},feedMeta:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',gap:8},feedMetaLeft:{flexDirection:'row',alignItems:'center',gap:7,flexShrink:1},feedLab:{fontSize:9.5,fontWeight:'850',color:C.muted,textTransform:'uppercase'},feedDate:{fontSize:10.5,color:C.muted},feedTitle:{fontSize:16,lineHeight:21,fontWeight:'800',color:C.ink},feedBody:{fontSize:13,lineHeight:19,color:C.text},expand:{fontSize:11.5,fontWeight:'750',color:C.blue,marginTop:1},collapse:{fontSize:10.5,color:C.muted,marginTop:1},
-  rankRow:{flexDirection:'row',alignItems:'baseline',justifyContent:'space-between'},rankName:{fontSize:23,fontWeight:'850',color:C.ink},rankPoints:{fontSize:12,fontWeight:'750',color:C.blue},
-  listCard:{backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:14,padding:14,gap:7},listCardSelected:{borderColor:C.blue},listTop:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',gap:8},listMeta:{fontSize:9.5,fontWeight:'850',letterSpacing:.75,color:C.muted,flexShrink:1},listDate:{fontSize:10.5,color:C.muted},listTitle:{fontSize:16,lineHeight:21,fontWeight:'800',color:C.ink},blueEdge:{borderLeftWidth:3,borderLeftColor:C.blue},goldEdge:{borderLeftWidth:3,borderLeftColor:C.gold},effect:{fontSize:20,fontWeight:'850',color:C.ink},evidenceLine:{fontSize:12,color:C.text},
-  back:{fontSize:14,fontWeight:'750',color:C.blue,marginBottom:5},detailMeta:{flexDirection:'row',gap:6,flexWrap:'wrap'},detailTitle:{fontSize:25,lineHeight:30,fontWeight:'850',color:C.ink,letterSpacing:-.4},detailLead:{fontSize:15,lineHeight:22,color:C.text},detailId:{fontSize:10.5,color:C.muted},detailSection:{backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:14,padding:14,gap:8,marginTop:2},detailLine:{flexDirection:'row',gap:9,alignItems:'flex-start'},detailLineText:{flex:1},checkMark:{fontSize:14,fontWeight:'900'},pass:{color:C.green},fail:{color:'#B24747'},difference:{gap:5,paddingVertical:3},
-  countRow:{flexDirection:'row',gap:8},countBox:{flex:1,backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:12,paddingVertical:11,alignItems:'center'},countNum:{fontSize:20,fontWeight:'850',color:C.ink},countLabel:{fontSize:9.5,fontWeight:'750',color:C.muted,marginTop:2},statRow:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',paddingVertical:2},stat:{fontSize:15,fontWeight:'850',color:C.ink},
-  starter:{borderWidth:1,borderColor:C.line,borderRadius:13,paddingHorizontal:13,paddingVertical:12,backgroundColor:C.white,flexDirection:'row',alignItems:'center',gap:8},starterText:{fontSize:13.5,lineHeight:18,color:C.ink,fontWeight:'650',flex:1},chevron:{fontSize:20,color:C.muted},bubble:{maxWidth:'88%',borderRadius:15,paddingHorizontal:13,paddingVertical:10},botBubble:{alignSelf:'flex-start',backgroundColor:C.white,borderWidth:1,borderColor:C.line},userBubble:{alignSelf:'flex-end',backgroundColor:C.ink},bubbleText:{fontSize:13.5,lineHeight:19,color:C.text},userBubbleText:{color:C.white},composer:{paddingHorizontal:12,paddingVertical:8,borderTopWidth:1,borderTopColor:C.line,backgroundColor:C.white,flexDirection:'row',alignItems:'flex-end',gap:7},input:{flex:1,minHeight:40,maxHeight:96,borderWidth:1,borderColor:'#D7DFDC',borderRadius:20,paddingHorizontal:13,paddingTop:10,paddingBottom:8,fontSize:13.5,color:C.ink},send:{width:40,height:40,borderRadius:20,backgroundColor:C.ink,alignItems:'center',justifyContent:'center'},sendText:{color:C.white,fontSize:20,fontWeight:'700'},
-  tabbar:{height:68,paddingBottom:Platform.OS==='ios'?8:4,borderTopWidth:1,borderTopColor:C.line,backgroundColor:C.white,flexDirection:'row',alignItems:'center'},tab:{flex:1,height:58,alignItems:'center',justifyContent:'center',gap:2,paddingHorizontal:2},tabIcon:{fontSize:15,color:'#9AA7A4'},tabLabel:{fontSize:8.5,fontWeight:'700',color:'#879693',maxWidth:72},tabActive:{color:C.blue},
+const C={ink:'#262321',text:'#574e46',muted:'#756b61',line:'rgba(69,50,35,0.16)',bg:'#F5F0E7',card:'#FFFDF8',sunk:'#EEE7DC',acc:'#B5121B',accSoft:'#F8E3E3',glucose:'#B83A32',glucoseSoft:'#FBE6DD',ok:'#2C8556',okSoft:'#E0F1E7',warn:'#A86C12',warnSoft:'#F8ECD6',gold:'#9A6D05',goldSoft:'#F7EDCF'};
+const S=StyleSheet.create({
+ safe:{flex:1,backgroundColor:C.bg,paddingTop:Platform.OS==='ios'?50:18},
+ header:{height:76,paddingHorizontal:18,backgroundColor:C.bg,borderBottomWidth:1,borderBottomColor:C.line,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},
+ brandWrap:{flexDirection:'row',alignItems:'center',gap:9},
+ logoMark:{width:39,height:39,borderRadius:20,borderWidth:2.5,borderColor:C.acc,backgroundColor:C.card,alignItems:'center',justifyContent:'center',position:'relative'},
+ logoWolf:{fontSize:19},logoGlass:{position:'absolute',right:-9,bottom:-9,fontSize:22,fontWeight:'900',color:C.ink,transform:[{rotate:'-42deg'}]},
+ brand:{fontSize:21,fontWeight:'700',letterSpacing:-.6,color:C.ink},tag:{fontSize:11.5,color:C.text,marginTop:3},
+ user:{fontSize:11.5,fontWeight:'600',color:C.ink},link:{fontSize:12,fontWeight:'600',color:C.acc,marginTop:2},headerActions:{flexDirection:'row',alignItems:'center',gap:5},headerDot:{fontSize:11,color:C.muted},syncMeta:{fontSize:8.5,color:C.muted,marginTop:1},
+ login:{flex:1,justifyContent:'center',padding:22},loginBox:{backgroundColor:C.card,borderWidth:1,borderColor:C.line,borderRadius:8,padding:20,gap:9},loginLead:{fontSize:13,lineHeight:19,color:C.text,marginVertical:8},
+ label:{fontSize:10.5,fontWeight:'500',letterSpacing:1.05,color:C.muted},inputBox:{height:46,borderWidth:1,borderColor:C.line,borderRadius:8,paddingHorizontal:12,color:C.ink,backgroundColor:C.card},
+ primary:{height:46,borderRadius:8,backgroundColor:C.acc,alignItems:'center',justifyContent:'center',marginTop:5},primaryText:{color:'#fff',fontWeight:'600'},small:{fontSize:11,lineHeight:15,color:C.muted},error:{fontSize:12.5,color:C.glucose},
+ content:{padding:17,paddingBottom:28,gap:10},title:{fontSize:27,lineHeight:32,fontWeight:'700',letterSpacing:-.4,color:C.ink},sub:{fontSize:12.5,lineHeight:18,color:C.text,marginTop:-4},section:{fontSize:15.5,fontWeight:'600',color:C.ink,marginTop:8},
+ card:{backgroundColor:C.card,borderWidth:1,borderColor:C.line,borderRadius:8,paddingHorizontal:16,paddingVertical:14,gap:7,shadowColor:'#453223',shadowOpacity:.035,shadowRadius:3,shadowOffset:{width:0,height:2}},pattern:{borderLeftWidth:1,borderTopWidth:1.5,borderTopColor:C.acc},fading:{opacity:.7},
+ cardTitle:{fontSize:15.5,lineHeight:21,fontWeight:'600',color:C.ink,flexShrink:1},body:{fontSize:13,lineHeight:19,color:C.ink},muted:{fontSize:13,lineHeight:18,color:C.text},meta:{fontSize:11,color:C.muted},caseNo:{fontSize:10.5,fontWeight:'500',letterSpacing:.7,color:C.muted},big:{fontSize:28,lineHeight:31,fontWeight:'700',color:C.ink},evidence:{fontSize:12.5,fontWeight:'500',color:C.text},stat:{fontSize:15,fontWeight:'600',color:C.ink},
+ row:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:8},pills:{flexDirection:'row',flexWrap:'wrap',gap:4},pill:{paddingHorizontal:8,paddingVertical:3,borderRadius:99,backgroundColor:C.sunk},pill_plain:{backgroundColor:C.sunk},pill_ok:{backgroundColor:C.okSoft},pill_warn:{backgroundColor:C.warnSoft},pill_danger:{backgroundColor:C.glucoseSoft},pill_accent:{backgroundColor:C.accSoft},pill_gold:{backgroundColor:C.goldSoft},pill_glucose:{backgroundColor:C.glucoseSoft},
+ pillText:{fontSize:10.5,fontWeight:'600',color:C.text},pillText_plain:{color:C.text},pillText_ok:{color:C.ok},pillText_warn:{color:C.warn},pillText_danger:{color:C.glucose},pillText_accent:{color:C.acc},pillText_gold:{color:C.gold},pillText_glucose:{color:C.glucose},
+ rule:{height:1,backgroundColor:C.line,marginVertical:4},labGrid:{flexDirection:'row',flexWrap:'wrap',gap:10},lab:{width:'48.5%',minHeight:112,backgroundColor:C.card,borderWidth:1,borderColor:C.line,borderRadius:8,padding:13,gap:4},labTitle:{fontSize:15.5,fontWeight:'600',color:C.ink},check:{flexDirection:'row',alignItems:'flex-start',gap:8},
+ bubble:{maxWidth:'88%',borderRadius:8,padding:11},userBubble:{alignSelf:'flex-end',backgroundColor:C.acc},botBubble:{alignSelf:'flex-start',backgroundColor:C.card,borderWidth:1,borderColor:C.line},composer:{padding:9,borderTopWidth:1,borderTopColor:C.line,backgroundColor:C.card,flexDirection:'row',alignItems:'flex-end',gap:7},chatInput:{flex:1,minHeight:40,maxHeight:95,borderWidth:1,borderColor:C.line,borderRadius:8,paddingHorizontal:13,paddingVertical:9,color:C.ink,backgroundColor:C.card},send:{width:40,height:40,borderRadius:8,backgroundColor:C.acc,alignItems:'center',justifyContent:'center'},
+ nav:{height:69,paddingBottom:Platform.OS==='ios'?8:3,backgroundColor:C.sunk,borderTopWidth:1,borderTopColor:C.line,flexDirection:'row'},navItem:{flex:1,alignItems:'center',justifyContent:'center',gap:2},navIcon:{fontSize:14,color:C.muted},navLabel:{fontSize:8.5,fontWeight:'600',color:C.muted},active:{color:C.acc}
 });
