@@ -21,6 +21,13 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema}")
 for volume in ("raw", "stream", "checkpoints"):
     spark.sql(f"CREATE VOLUME IF NOT EXISTS {catalog}.{schema}.{volume}")
 
+# Reviewed app uploads live separately from replay meals so replay resets cannot erase them.
+spark.sql(f"""CREATE TABLE IF NOT EXISTS {catalog}.{schema}.photo_meals (
+    pid STRING, meal_id STRING, ts TIMESTAMP, carbs DOUBLE, carbs_missing BOOLEAN,
+    sugar DOUBLE, fiber DOUBLE, protein DOUBLE, fat DOUBLE, calories DOUBLE,
+    items STRING, source STRING, confidence STRING, uploaded_at TIMESTAMP
+) USING DELTA""")
+
 print(f"Upload raw files to /Volumes/{catalog}/{schema}/raw/<pid>/")
 display(spark.sql(f"SHOW VOLUMES IN {catalog}.{schema}"))
 

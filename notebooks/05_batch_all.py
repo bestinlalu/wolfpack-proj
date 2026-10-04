@@ -43,6 +43,7 @@ import pandas as pd
 from bodylab.agent.investigator import make_investigator
 from bodylab.databricks_io import read_pid_table, save_state, write_pid_table
 from bodylab.engine import Engine
+from bodylab.meal_log import combine_meals
 
 dbutils.widgets.text("catalog", "workspace")
 dbutils.widgets.text("schema", "body_lab")
@@ -59,10 +60,12 @@ summary = []
 for pid in pids:
     minute = read_pid_table(spark, f"{prefix}.minute_signals", pid)
     meals = read_pid_table(spark, f"{prefix}.meals", pid)
+    replay_meals = meals.copy()
+    meals = combine_meals(meals, read_pid_table(spark, f"{prefix}.photo_meals", pid))
     engine = Engine(pid, minute, meals, investigator=make_investigator(dbutils.widgets.get("use_gemini") == "yes"))
     engine.run(step_hours=6)
     write_pid_table(spark, minute, f"{prefix}.live_minute", pid)
-    write_pid_table(spark, meals, f"{prefix}.live_meals", pid)
+    write_pid_table(spark, replay_meals, f"{prefix}.live_meals", pid)
     save_state(spark, prefix, pid, engine.features, engine.notebook, engine.until, engine.investigator.name)
     summary.append({"pid": pid, **engine.notebook.funnel(), "rank": engine.notebook.rank()[0]})
     print(pid, summary[-1])

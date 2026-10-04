@@ -50,6 +50,7 @@ from bodylab.agent.investigator import make_investigator
 from bodylab.agent.notebook import Notebook
 from bodylab.databricks_io import load_notebook, read_pids_table, save_states
 from bodylab.engine import Engine
+from bodylab.meal_log import combine_meals, historical_meals_changed, meal_fingerprint
 
 dbutils.widgets.text("catalog", "workspace")
 dbutils.widgets.text("schema", "body_lab")
@@ -75,11 +76,13 @@ print("Investigator:", investigator.name, "| participants:", ", ".join(pids))
 # Delta is read once at the start and written once per loop for everyone who changed.
 notebooks = {pid: load_notebook(spark, prefix, pid) for pid in pids}
 last: dict[str, pd.Timestamp] = {}
+last_meals: dict[str, pd.DataFrame] = {}
 written: dict = {}  # fingerprints of what's already in Delta, so unchanged tables aren't rewritten
 waiting_shown = False
 while time.time() < deadline:
     live = read_pids_table(spark, f"{prefix}.live_minute", pids)
     live_meals = read_pids_table(spark, f"{prefix}.live_meals", pids)
+    photo_meals = read_pids_table(spark, f"{prefix}.photo_meals", pids)
     changed = []
     for pid in pids:
         minute = live[live["pid"] == pid] if not live.empty else live
@@ -87,21 +90,31 @@ while time.time() < deadline:
             if pid in last:  # stream was reset: start this participant over
                 notebooks[pid] = Notebook(pid)
                 del last[pid]
+                last_meals.pop(pid, None)
             continue
         minute = minute.drop_duplicates("ts").sort_values("ts")
         meals = live_meals[live_meals["pid"] == pid] if not live_meals.empty else live_meals
         meals = meals.drop_duplicates("meal_id").sort_values("ts") if not meals.empty else meals
+        photos = photo_meals[photo_meals["pid"] == pid] if not photo_meals.empty else photo_meals
+        meals = combine_meals(meals, photos)
         until = minute["ts"].max()
+        meals_changed = pid not in last_meals or meal_fingerprint(meals) != meal_fingerprint(last_meals[pid])
         if pid in last and until < last[pid]:  # stream restarted from the beginning
             print(f"{pid}: stream restarted, starting this participant's lab over")
             notebooks[pid] = Notebook(pid)
-        elif pid in last and until == last[pid]:
+        elif ((pid not in last and not photos.empty)
+              or (pid in last_meals and historical_meals_changed(last_meals[pid], meals, last[pid]))):
+            # A corrected/backdated meal changes historical baselines and evidence.
+            # Rebuild this participant instead of testing old situations twice.
+            notebooks[pid] = Notebook(pid)
+        elif pid in last and until == last[pid] and not meals_changed:
             continue
         engine = Engine(pid, minute, meals, notebooks[pid], investigator)
         before = len(engine.notebook.messages)
         engine.step(until)
         notebooks[pid] = engine.notebook
         last[pid] = until
+        last_meals[pid] = meals.copy()
         changed.append((pid, engine.features, engine.notebook, engine.until, investigator.name))
         for m in engine.notebook.messages[before:]:
             print(f"{pid} {pd.Timestamp(m['ts']):%a %b %d %H:%M} [{m['kind']}] {m['title']}")
