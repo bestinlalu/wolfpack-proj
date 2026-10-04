@@ -134,12 +134,36 @@ def health():
 @app.post("/api/auth/login")
 def login(req: LoginRequest):
     if not password_required():
-        raise HTTPException(status_code=503, detail="BODYLAB_DEMO_PASSWORD is not configured")
-    available = set(open_store().pids())
-    users = [u for u in load_users() if u.pid in available]
+        raise HTTPException(
+            status_code=503,
+            detail="BODYLAB_DEMO_PASSWORD is not configured",
+        )
+
+    users = load_users()
     user = authenticate(users, req.username, req.password)
+
     if user is None:
-        raise HTTPException(status_code=401, detail="Invalid username or password")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password",
+        )
+
+    token = secrets.token_urlsafe(32)
+    SESSIONS[token] = {
+        "username": user.username,
+        "name": user.name,
+        "pid": user.pid,
+        "expires_at": time.time() + SESSION_TTL_SECONDS,
+    }
+
+    return {
+        "token": token,
+        "user": {
+            "username": user.username,
+            "name": user.name,
+            "participant_id": user.pid,
+        },
+    }
     token = secrets.token_urlsafe(32)
     SESSIONS[token] = {
         "username": user.username, "name": user.name, "pid": user.pid,
