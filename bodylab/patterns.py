@@ -31,8 +31,8 @@ RESPONSES = {
     "sleep": ("later sleep", "earlier sleep"),
     "stress": ("more stress", "less stress"),
 }
-STATUS = {"testing": "Still checking", "confirmed": "Confirmed", "fading": "Rechecking",
-          "rejected": "Not confirmed", "inconclusive": "Unclear", "expired": "Expired"}
+STATUS = {"testing": "Possible link", "confirmed": "Confirmed", "fading": "Mixed evidence",
+          "rejected": "Denied", "inconclusive": "Not enough data", "expired": "Not enough data"}
 
 
 def _factor(h: dict, high: bool) -> str:
@@ -41,11 +41,24 @@ def _factor(h: dict, high: bool) -> str:
     return FACTORS[h["factor"]][0 if high else 1]
 
 
-def question(h: dict) -> str:
+def _parts(h: dict) -> tuple[str, str]:
     side = h.get("side", 1)
     side = 1 if side is None or pd.isna(side) or side >= 0 else -1
     response = RESPONSES[h["lab"]][0 if h["direction"] * side > 0 else 1]
-    return f"{_factor(h, side > 0)}, {response}?"
+    return _factor(h, side > 0), response
+
+
+def question(h: dict) -> str:
+    factor, response = _parts(h)
+    verb = "Do" if h["factor"] in ("hour", "weekend", "night_temp") else "Does"
+    article = "a " if h["lab"] in ("fuel", "movement") else ""
+    return f"{verb} {factor.lower()} go with {article}{response}?"
+
+
+def statement(h: dict) -> str:
+    factor, response = _parts(h)
+    article = "a " if h["lab"] in ("fuel", "movement") else ""
+    return f"{factor} went with {article}{response}."
 
 
 def name(h: dict) -> str:
@@ -68,4 +81,4 @@ def origin(h: dict, events: list[dict]) -> str:
     day = pd.Timestamp(ts).day_name() if ts is not None and pd.notna(ts) else "First observation"
     situation = {"fuel": "meal", "movement": "walk", "sleep": "night", "stress": "stress window"}[h["lab"]]
     label = f"{day}’s {situation}" if day != "First observation" else "the first observation"
-    return f"Started after {label}: {question(observed)[:-1].lower()}."
+    return f"Started after {label}: {statement(observed).lower()}"

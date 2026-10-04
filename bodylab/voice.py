@@ -24,7 +24,7 @@ def recap_text(nb: Notebook, until: pd.Timestamp, days: int = 7) -> str:
     if found:
         parts.append(f"You confirmed {len(found)} new discover{'y' if len(found) == 1 else 'ies'}. " + " ".join(m["body"].split(". Held")[0] + "." for m in found[:2]))
     if cases:
-        parts.append(f"I solved {len(cases)} case{'s' if len(cases) != 1 else ''}. The latest: {cases[-1]['title']}.")
+        parts.append(f"I found {len(cases)} possible link{'s' if len(cases) != 1 else ''}. The latest: {cases[-1]['title']}.")
     if rejected:
         parts.append(f"{len(rejected)} idea{'s' if len(rejected) != 1 else ''} didn't hold up, so I logged {'them' if len(rejected) != 1 else 'it'} as noise.")
     if quiet:

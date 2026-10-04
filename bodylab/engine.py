@@ -134,9 +134,9 @@ class Engine:
         elif new == "confirmed":
             nb.message(ts, "discovery", f"Holding again: {h['claim']}", "Newer data agrees again.", lab, h["hyp_id"])
         elif new == "rejected":
-            nb.message(ts, "rejected", f"Not confirmed: {h['claim']}", f"Held in {h['supports']} of {h['supports'] + h['contradicts']} tests. Logged as noise.", lab, h["hyp_id"])
+            nb.message(ts, "rejected", f"Denied: {h['claim']}", f"Held in {h['supports']} of {h['supports'] + h['contradicts']} tests. Logged as noise.", lab, h["hyp_id"])
         elif new == "fading":
-            nb.message(ts, "fading", f"Fading: {h['claim']}", "Recent data disagrees, so this card is being rechecked.", lab, h["hyp_id"])
+            nb.message(ts, "fading", f"Mixed evidence: {h['claim']}", "Recent data disagrees, so this card is being rechecked.", lab, h["hyp_id"])
 
     def _investigate(self, ctx: ToolContext, lab: str, row: pd.Series) -> None:
         nb = self.notebook
@@ -164,7 +164,7 @@ class Engine:
             output_tokens=result.get("usage", {}).get("output_tokens", 0),
         )
         if result["verdict"] == "lead":
-            nb.message(row["end_ts"], "case", result.get("title", "Case solved"), result.get("message", ""), lab, event["event_id"])
+            nb.message(row["end_ts"], "case", result.get("title", "Possible link"), result.get("message", ""), lab, event["event_id"])
             h = next((x for x in nb.hypotheses if x["hyp_id"] == event.get("hyp_id")), None)
             if h is not None:
                 self._apply_status(ctx, h, row["end_ts"])

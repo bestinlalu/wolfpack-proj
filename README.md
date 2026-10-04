@@ -59,7 +59,7 @@ Millions of people can now see their glucose curves, but no app tells them **why
 
 | Body Lab does | Typical apps do |
 | --- | --- |
-| Notifies only when it has an answer: a solved case or a confirmed discovery | Alert that something was unusual (for example Fitbit Body Responses, high heart rate alerts) |
+| Notifies when it finds a possible link or a confirmed discovery | Alert that something was unusual (for example Fitbit Body Responses, high heart rate alerts) |
 | Investigates one surprising event against similar past situations | Compare with a general average |
 | Treats findings as hypotheses and confirms them with natural experiments | Present insights as facts, never tested |
 | Detects behavior from sensors, no journaling | Ask for daily check-ins or mood logs |
@@ -221,14 +221,14 @@ sequenceDiagram
     T-->>A: ranked differences vs personal normal
     A->>T: open_hypothesis(claim, factor)
     T->>N: new hypothesis
-    A->>U: "Case solved" message with the why
+    A->>U: "Possible link" message with the why
 ```
 
 ### Hypothesis lifecycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Testing: opened from a solved case
+    [*] --> Testing: opened from a possible link
     Testing --> Confirmed: 3+ supporting tests and 75%+ agree
     Testing --> Rejected: fails in most tests
     Testing --> Inconclusive: 5 chances, no clear result
@@ -264,7 +264,7 @@ Tools Gemini can call (in [`bodylab/agent/tools.py`](bodylab/agent/tools.py)):
 
 Evidence recording, lifecycle rules, discovery cards and quests are run by the engine ([`bodylab/engine.py`](bodylab/engine.py)) on every new situation, not by the language model, so they are deterministic and cheap. Without a Gemini key, a rule-based investigator calls the same tools in a fixed order; with a key, any Gemini error falls back to it.
 
-Hypotheses appear as short questions under **Possible patterns**, with a brief note about the observation that started them. Green check dots mark matches, red cross dots mark observations that did not match, and the adjacent label shows the total matched count. Active patterns carry a **Tracking automatically** badge. Discovery previews use pattern names instead of internal hypothesis IDs; **Solved** remains the case label. These are display changes only and do not alter evidence or confirmation rules.
+Hypotheses use five consistent labels across Today, Case, Discoveries and Notebook: **Possible link**, **Confirmed**, **Mixed evidence**, **Denied**, and **Not enough data**. Internally these map to testing, confirmed, fading, rejected, and inconclusive/expired respectively. Questions use full wording such as "Do later walks go with a lower walk heart rate?"; confirmed patterns use statements such as "Later walks went with a lower walk heart rate." Green check circles mark matches, red cross circles mark observations that did not match, and the adjacent label shows the total matched count. Possible links and patterns with mixed evidence carry a **Tracking automatically** badge. Confirmed patterns remain monitored without that badge. Notebook separates unconfirmed and confirmed patterns into columns, with closed patterns collapsed and summary cards below. Today shows the latest update per pattern. Case labels reflect the linked pattern's current status; the original event explanation is available under **Explanation at the time**. Discovery previews use pattern names instead of internal hypothesis IDs. These are display changes only and do not alter evidence or confirmation rules.
 
 ### Lab notebook tables
 
@@ -345,7 +345,7 @@ No competitive leaderboard: ranking people on health can backfire.
 
 | Screen | What it shows |
 | --- | --- |
-| Today | Confirmed discovery and solved case cards (each leading with the why), count of surprises closed quietly, scientist rank, weekly quest, the four labs, voice recap |
+| Today | Possible links and pattern updates from the current replay day only, today's count of surprises closed quietly, scientist rank, latest two optional quests (or "No quests currently" when empty), the four labs, voice recap |
 | Case | Two curves on one chart, data check, ranked differences against the normal band, verdict |
 | Discoveries | Cards with rarity (legendary, rare, common, fading) and locked cards close to confirmation |
 | Notebook | Open hypotheses with evidence, the discovery funnel, recently rejected hypotheses |
@@ -505,7 +505,7 @@ The Databricks notebooks and app have been written against the documented APIs b
 
 1. **Hook (0:00 to 0:20):** "1 in 3 US adults has prediabetes. Glucose monitors are now sold over the counter, but they show curves, not reasons."
 2. **Start the replay (0:20 to 0:40):** Databricks streams one participant's week at high speed.
-3. **The case (0:40 to 1:30):** no alert fires; a solved case appears: "Thursday's lunch spiked because you barely moved before eating." Open it: same pasta, +25 vs +70, data check passes, ranked differences, hypothesis opened.
+3. **The case (0:40 to 1:30):** a possible link appears: "Does less pre-meal walking go with a bigger glucose rise?" Open it: same pasta, +25 vs +70, data check passes, ranked differences, hypothesis opened.
 4. **Confirmation (1:30 to 2:00):** later meals add evidence; the hypothesis becomes a discovery card and the rank rises.
 5. **Rigor (2:00 to 2:30):** the Notebook funnel shows most surprises dismissed; the agent finds a planted change.
 6. **Close (2:30 to 3:00):** the ElevenLabs recap plays. "Health apps give you scores. Body Lab gives you a scientist."
