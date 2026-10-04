@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from bodylab import meal_photo, voice  # noqa: E402
 from bodylab import patterns  # noqa: E402
 from bodylab.agent.investigator import make_investigator  # noqa: E402
+from bodylab.agent.chat import BodyLabChat  # noqa: E402
 from bodylab.formatting import fmt as _fmt  # noqa: E402
 from bodylab.config import elevenlabs_api_key, gemini_api_key  # noqa: E402
 from bodylab.engine import Engine  # noqa: E402
@@ -141,12 +142,52 @@ def stress_scale_html(level, usual) -> str:
 
 
 # ---------------------------------------------------------------- state
-store = open_store()
-pids = store.pids()
+CACHE_SECONDS = 60  # Databricks mode: how long results are reused before the next interaction reloads them
+
+
+@st.cache_resource(show_spinner="Connecting to Databricks…")
+def get_store():
+    return open_store()
+
+
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Checking for participants…")
+def _cached_pids(_store) -> list[str]:
+    return _store.pids()
+
+
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your wristband and glucose data…")
+def _cached_inputs(_store, pid: str):
+    return _store.read_inputs(pid)
+
+
+@st.cache_data(ttl=CACHE_SECONDS, show_spinner="Loading your cases and discoveries…")
+def _cached_state(_store, pid: str):
+    return _store.read_state(pid)
+
+
+def clear_cache() -> None:
+    for fn in (_cached_pids, _cached_inputs, _cached_state):
+        fn.clear()
+
+
+# Local files are instant and change with every replay step, so only Databricks reads are cached.
+store = get_store()
+read_pids = (lambda: _cached_pids(store)) if store.read_only else store.pids
+read_inputs = (lambda p: _cached_inputs(store, p)) if store.read_only else store.read_inputs
+read_state = (lambda p: _cached_state(store, p)) if store.read_only else store.read_state
+
+pids = read_pids()
 if not pids:
     st.title("Body Lab")
-    st.info("No participants yet. Prepare data first:\n\n`python scripts/prepare.py --synthetic` (demo data) or "
-            "`python scripts/prepare.py --pid 001` after downloading the BIG IDEAs files.")
+    if store.read_only:
+        st.info("No results in Databricks yet. Run the `05_batch_all` notebook (or the streaming notebooks), "
+                "then press Refresh.")
+        if st.button("Refresh"):
+            clear_cache()
+            st.rerun()
+    else:
+        st.info("No participants yet. Prepare data first:\n\n`python scripts/prepare.py --synthetic` (demo data) or "
+                "`python scripts/prepare.py --pid 001` after downloading the BIG IDEAs files.")
     st.stop()
 
 users = [u for u in load_users() if u.pid in pids]
@@ -194,8 +235,8 @@ with st.sidebar:
 
 
 def load_engine(pid: str) -> Engine:
-    minute, meals = store.read_inputs(pid)
-    features, nb, until, _ = store.read_state(pid)
+    minute, meals = read_inputs(pid)
+    features, nb, until, _ = read_state(pid)
     eng = Engine(pid, minute, meals, nb, make_investigator(prefer_llm=use_llm))
     eng.features, eng.until = features, until
     return eng
@@ -210,8 +251,9 @@ with st.sidebar:
     pct = 0.0 if eng.until is None else (eng.until - eng.start) / (eng.end - eng.start)
     st.progress(min(max(pct, 0.0), 1.0), text=f"{now:%a %b %d, %H:%M}" if eng.until is not None else "Not started")
     if store.read_only:
-        st.caption("Streaming on Databricks; this view refreshes from the Delta tables.")
+        st.caption(f"Reading results from Databricks. Data is reused for {CACHE_SECONDS} seconds; Refresh loads the latest now.")
         if st.button("Refresh", use_container_width=True):
+            clear_cache()
             st.rerun()
     else:
         c1, c2 = st.columns(2)
@@ -261,7 +303,7 @@ with st.sidebar:
                 st.success("Added at the current replay time.")
     st.caption("Body Lab reports what was different, never causes. Not medical advice.")
 
-tab_today, tab_case, tab_disc, tab_nb = st.tabs(["Today", "Case", "Discoveries", "Notebook"])
+tab_today, tab_case, tab_disc, tab_nb, tab_chat = st.tabs(["Today", "Case", "Discoveries", "Notebook", "💬 Ask Body Lab"])
 
 if eng.until is None:
     with tab_today:
@@ -271,7 +313,7 @@ if eng.until is None:
         _, quest_area = st.columns([3, 2], gap="large")
         with quest_area:
             card('<div class="bl-label">Quests · optional</div><div class="bl-sub">No quests currently</div>')
-    for tab in (tab_case, tab_disc, tab_nb):
+    for tab in (tab_case, tab_disc, tab_nb, tab_chat):
         with tab:
             st.caption("Start the replay to see your lab.")
     st.stop()
@@ -543,3 +585,60 @@ with tab_nb:
         good = sum(bool(p.get("good_data", True)) for p in nb.processed)
         card(f'<div class="bl-label">Situations watched</div><div class="bl-big bl-num">{processed}</div>'
              f'<div class="bl-sub">{good} passed the data check and counted as natural experiments.</div>')
+
+
+# ---------------------------------------------------------------- Ask Body Lab
+with tab_chat:
+    st.markdown("## Ask Body Lab")
+    st.caption("Ask about patterns, discoveries, hypotheses, and cases Body Lab has actually observed in your data.")
+
+    if not gemini_api_key():
+        st.info("Set `GEMINI_API_KEY` to enable Ask Body Lab.")
+    else:
+        chat_key = f"bodylab_chat_{pid}"
+        if chat_key not in st.session_state:
+            st.session_state[chat_key] = []
+
+        starter_questions = [
+            "What have you learned about me so far?",
+            "Which hypothesis has the strongest evidence?",
+            "Have any of your ideas been proven wrong?",
+            "What should Body Lab investigate next?",
+        ]
+        if not st.session_state[chat_key]:
+            st.markdown('<div class="bl-label">Try asking</div>', unsafe_allow_html=True)
+            cols = st.columns(2)
+            for i, starter in enumerate(starter_questions):
+                if cols[i % 2].button(starter, key=f"starter_{pid}_{i}", use_container_width=True):
+                    st.session_state[f"bodylab_pending_{pid}"] = starter
+                    st.rerun()
+
+        for message in st.session_state[chat_key]:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        typed = st.chat_input("Ask about your Body Lab data…", key=f"chat_input_{pid}")
+        pending_key = f"bodylab_pending_{pid}"
+        prompt = st.session_state.pop(pending_key, None) or typed
+
+        if prompt:
+            history = list(st.session_state[chat_key])
+            st.session_state[chat_key].append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant"):
+                try:
+                    with st.spinner("Reading your lab notebook…"):
+                        chatbot = BodyLabChat(nb, eng.features, pd.Timestamp(now))
+                        answer = chatbot.ask(prompt, history=history)
+                    st.markdown(answer)
+                except Exception as exc:
+                    answer = "I couldn't query the Body Lab notebook right now. Please try again in a moment."
+                    st.error(answer)
+                    st.caption(str(exc))
+            st.session_state[chat_key].append({"role": "assistant", "content": answer})
+
+        if st.session_state[chat_key]:
+            if st.button("Clear chat", key=f"clear_chat_{pid}"):
+                st.session_state[chat_key] = []
+                st.rerun()

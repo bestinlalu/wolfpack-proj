@@ -6,7 +6,7 @@ def test_users_map_to_distinct_participants():
     users = load_users()
     pids = [u.pid for u in users]
     assert len(pids) == len(set(pids))
-    assert {"001", "002", "003", "004", "005"} <= set(pids)
+    assert {"001", "002", "004", "005", "006"} <= set(pids)
     assert len({u.username for u in users}) == len(users)
 
 

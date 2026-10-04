@@ -76,3 +76,15 @@ def test_acc_steps_counts_peaks():
     df = pd.DataFrame({"datetime": t, "acc_x": 0.0, "acc_y": 0.0, "acc_z": wave})
     out = loader.acc_minute(df)
     assert 90 <= out["steps"].sum() <= 125
+
+
+def test_food_log_column_check(tmp_path):
+    good = tmp_path / "good.csv"
+    good.write_text(FOOD)
+    headerless = tmp_path / "Food_Log_003.csv"
+    headerless.write_text("2020-02-22,10:30:00,2020-02-22 10:30:00,Chicken Nuggets,8.0,piece,x,393.0,19.0,0.1,20.0\n")
+    renamed = tmp_path / "Food_Log_007.csv"
+    renamed.write_text(FOOD.replace("date,time,", "date,time_of_day,", 1))
+    assert loader.food_log_is_standard(good)
+    assert not loader.food_log_is_standard(headerless)
+    assert not loader.food_log_is_standard(renamed)

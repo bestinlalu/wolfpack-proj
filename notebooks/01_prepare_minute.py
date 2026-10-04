@@ -4,7 +4,8 @@
 # MAGIC Spark reads each participant's wristband CSVs (accelerometer is about 800 MB per person), downsamples them
 # MAGIC to one row per minute, and joins glucose. Writes `minute_signals` and `meals` (one replaceable slice per participant).
 # MAGIC `pids` defaults to the five participants assigned to users in `bodylab/users.json`. Participants whose files are
-# MAGIC missing are skipped with a message. Add `synthetic` to the list to also load the synthetic participant S01
+# MAGIC missing, or whose food log doesn't have the standard columns (003 has no header, 007 uses `time_of_day`), are
+# MAGIC skipped with a message. Add `synthetic` to the list to also load the synthetic participant S01
 # MAGIC (planted effects, useful for checking the pipeline).
 
 # COMMAND ----------
@@ -41,7 +42,7 @@ from bodylab.databricks_io import write_pid_table
 
 dbutils.widgets.text("catalog", "workspace")
 dbutils.widgets.text("schema", "body_lab")
-dbutils.widgets.text("pids", "001,002,003,004,005")
+dbutils.widgets.text("pids", "001,002,004,005,006")
 catalog, schema = dbutils.widgets.get("catalog"), dbutils.widgets.get("schema")
 prefix = f"{catalog}.{schema}"
 raw = f"/Volumes/{catalog}/{schema}/raw"
@@ -96,6 +97,10 @@ for pid in pids:
         missing = [n for n in NEEDED if not os.path.exists(f"{raw}/{pid}/{n}_{pid}.csv")]
         if missing:
             print(f"{pid}: skipped, missing {', '.join(missing)} in {raw}/{pid}/ (run the download cell in 00_setup)")
+            skipped.append(pid)
+            continue
+        if not loader.food_log_is_standard(f"{raw}/{pid}/Food_Log_{pid}.csv"):
+            print(f"{pid}: skipped, food log doesn't have the standard columns")
             skipped.append(pid)
             continue
         wrist = acc_per_minute(pid)

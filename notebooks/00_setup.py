@@ -28,7 +28,7 @@ display(spark.sql(f"SHOW VOLUMES IN {catalog}.{schema}"))
 
 # MAGIC %md
 # MAGIC ## Download participants into the raw Volume
-# MAGIC `download_pids` defaults to the five participants assigned to users in `bodylab/users.json` (`001`–`005`); leave it empty
+# MAGIC `download_pids` defaults to the five participants assigned to users in `bodylab/users.json` (`001`, `002`, `004`, `005`, `006`); leave it empty
 # MAGIC to skip. About 5 minutes per participant.
 # MAGIC The large wristband files (ACC, EDA, TEMP, about 1 GB) come from PhysioNet's fast Amazon S3 mirror, whose 1.0.0 copies
 # MAGIC are identical in size to version 1.1.3 for all 16 participants. HR, Dexcom and the food log come from PhysioNet 1.1.3,
@@ -43,7 +43,7 @@ import time
 
 import requests
 
-dbutils.widgets.text("download_pids", "001,002,003,004,005")
+dbutils.widgets.text("download_pids", "001,002,004,005,006")
 pids = [p.strip() for p in dbutils.widgets.get("download_pids").split(",") if p.strip()]
 PHYSIONET = "https://physionet.org/files/big-ideas-glycemic-wearable/1.1.3"
 MIRROR = "https://physionet-open.s3.amazonaws.com/big-ideas-glycemic-wearable/1.0.0"

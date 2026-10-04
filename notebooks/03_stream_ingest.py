@@ -34,9 +34,27 @@ def ingest(name: str, table: str):
 
 # COMMAND ----------
 
+import os
+
+
+def has_files(name: str) -> bool:
+    """Auto Loader can't work out the columns from an empty folder, so each stream waits for its first file."""
+    for _, _, files in os.walk(f"{stream}/{name}"):
+        if any(f.endswith(".parquet") for f in files):
+            return True
+    return False
+
+
+waiting_shown = False
 while time.time() < deadline:
-    queries = [ingest("minute", "live_minute"), ingest("meals", "live_meals")]
-    for q in queries:
-        q.awaitTermination()
+    ready = [(name, table) for name, table in (("minute", "live_minute"), ("meals", "live_meals")) if has_files(name)]
+    if not ready:
+        if not waiting_shown:
+            print("Waiting for the replayer (02_replayer) to write its first files...")
+            waiting_shown = True
+        time.sleep(3)
+        continue
+    for name, table in ready:
+        ingest(name, table).awaitTermination()
     time.sleep(3)
 print("Stopped ingest loop")

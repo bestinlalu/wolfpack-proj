@@ -33,6 +33,10 @@ def main() -> None:
         print(f"S01: {len(minute):,} minutes, {len(meals)} meals")
 
     for pid in args.pid:
+        raw_dir = Path(args.raw_dir or loader.SETTINGS.raw_dir)
+        if not loader.food_log_is_standard(raw_dir / pid / f"Food_Log_{pid}.csv"):
+            print(f"{pid}: skipped, food log doesn't have the standard columns")
+            continue
         t = time.time()
         minute, meals = loader.load_participant(pid, args.raw_dir, args.wrist_offset_hours)
         store.write_inputs(pid, minute, meals)
