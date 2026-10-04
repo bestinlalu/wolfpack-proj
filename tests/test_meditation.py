@@ -30,3 +30,15 @@ def test_timer_rounds():
     assert [p["sec"] for p in phases] == [180] * 4
     assert [p["cue"] for p in phases] == ["start", "checkin", "checkin", "checkin"]
     assert "data:audio/mpeg;base64,bXAz" in html
+
+
+def test_timer_embeds_music_and_every_practice_has_a_prompt():
+    assert all(p.music for p in md.PRACTICES.values())
+    html = md.timer_html(md.PRACTICES["sleep"], 15, 1, {}, "x", music=b"song")
+    assert 'M = "data:audio/mpeg;base64,c29uZw=="' in html
+    assert 'M = ""' in md.timer_html(md.PRACTICES["sleep"], 15, 1, {}, "x")
+
+
+def test_compose_music_without_key_is_none(monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    assert md.compose_music("calm") is None

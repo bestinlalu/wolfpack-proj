@@ -12,7 +12,9 @@ import logging
 import re
 from dataclasses import dataclass
 
-from bodylab.config import SETTINGS, gemini_api_key
+import requests
+
+from bodylab.config import SETTINGS, elevenlabs_api_key, gemini_api_key
 
 log = logging.getLogger(__name__)
 
@@ -27,27 +29,32 @@ class Practice:
     round_min: int
     rounds: int
     brief: str  # what the cues are for, for Gemini
+    music: str  # prompt for the ElevenLabs background track
     fallback: dict
 
 
 PRACTICES = {
     "breathing": Practice("breathing", "Breathing", "Breathe", 3, 3,
                           "a breathing meditation: slow, even breaths, attention resting on the breath",
+                      "Slow ambient meditation music, warm soft pads, gentle and spacious, about 60 bpm, no percussion, no vocals",
                           {"start": "Sit comfortably and close your eyes. Breathe in for four, and slowly out for six.",
                            "checkin": "If your mind has wandered, that's fine. Gently come back to the breath.",
                            "finish": "Let your breathing return to normal. When you're ready, open your eyes."}),
     "body_scan": Practice("body_scan", "Body scan", "Scan", 3, 4,
                           "a body scan meditation: attention moving slowly through the body, noticing and softening",
+                      "Calm ambient drone with soft piano notes and distant singing bowls, very slow, no percussion, no vocals",
                           {"start": "Settle in and bring your attention to your feet. Notice any warmth, weight or tension.",
                            "checkin": "Let your attention move a little higher through the body. Notice, and soften.",
                            "finish": "Feel your whole body at once, resting here. Slowly come back to the room."}),
     "pause": Practice("pause", "Mindful pause", "Pause", 5, 1,
                       "a short mindful pause in the middle of the day: arriving in the present moment",
+                      "Light peaceful ambient music with soft flute and gentle nature texture, airy and calm, no vocals",
                       {"start": "Pause what you're doing. Feel your feet on the floor and take three slow breaths.",
                        "checkin": "",
                        "finish": "Carry this calm with you as you go back to your day."}),
     "sleep": Practice("sleep", "Sleep wind-down", "Wind down", 15, 1,
                       "a meditation before sleep: slow breathing, releasing the body, letting the day go",
+                      "Very slow, dreamy sleep music, deep soft pads and faint low piano, quiet and dark, no percussion, no vocals",
                       {"start": "Lie back and let the bed hold you. Breathe slowly, and let each breath out be longer.",
                        "checkin": "",
                        "finish": "Let go of the day. There's nothing left to do. Goodnight."}),
@@ -108,6 +115,24 @@ def write_cues(practice: Practice, name: str, context: str, round_min: int, roun
         return dict(practice.fallback)
 
 
+MUSIC_SECONDS = 60  # one track per practice, looped under the cues (kept short to save ElevenLabs credits)
+
+
+def compose_music(prompt: str, seconds: int = MUSIC_SECONDS) -> bytes | None:
+    """An instrumental MP3 from ElevenLabs Music, or None without a key. Raises on API errors (e.g. plan limits)."""
+    key = elevenlabs_api_key()
+    if not key:
+        return None
+    resp = requests.post("https://api.elevenlabs.io/v1/music", params={"output_format": "mp3_44100_64"},
+                         headers={"xi-api-key": key, "Accept": "audio/mpeg"},
+                         json={"prompt": prompt, "music_length_ms": seconds * 1000, "force_instrumental": True},
+                         timeout=240)
+    if not resp.ok:
+        detail = resp.text[:200]
+        raise RuntimeError(f"ElevenLabs music {resp.status_code}: {detail}")
+    return resp.content
+
+
 VISUALIZATION_LENGTHS = {"Short (~2 min)": 250, "Longer (~4 min)": 450}
 
 
@@ -125,14 +150,16 @@ def write_visualization(name: str, theme: str, words: int) -> tuple[str, str]:
     return (title or "Guided visualization"), (body.strip() or text)
 
 
-def timer_html(practice: Practice, round_min: int, rounds: int, audio: dict, timer_id: str) -> str:
+def timer_html(practice: Practice, round_min: int, rounds: int, audio: dict, timer_id: str,
+               music: bytes | None = None) -> str:
     """A self-contained timer that plays each cue as its round starts. It runs in the browser, so the page's
     background syncs don't interrupt it, and it resumes from its start time if the page reloads."""
     phases = [{"label": f"{practice.round_label} {r + 1}/{rounds}" if rounds > 1 else practice.round_label,
                "sec": round_min * 60, "cue": "start" if r == 0 else "checkin"} for r in range(rounds)]
     sounds = {c: "data:audio/mpeg;base64," + base64.b64encode(b).decode() for c, b in audio.items() if b}
+    track = "data:audio/mpeg;base64," + base64.b64encode(music).decode() if music else ""
     return _TIMER.replace("__PHASES__", json.dumps(phases)).replace("__SOUNDS__", json.dumps(sounds)) \
-                 .replace("__ID__", json.dumps(timer_id))
+                 .replace("__ID__", json.dumps(timer_id)).replace("__MUSIC__", json.dumps(track))
 
 
 _TIMER = """
@@ -143,15 +170,31 @@ _TIMER = """
     <div id="bar" style="height:100%;width:0;background:#6c63ff;transition:width .5s"></div></div>
   <button id="go" style="padding:8px 20px;border-radius:10px;border:0;background:#6c63ff;color:#fff;font-size:15px;cursor:pointer">Begin</button>
   <button id="stop" style="padding:8px 16px;border-radius:10px;border:1px solid #8886;background:none;color:inherit;font-size:15px;cursor:pointer;display:none">End</button>
+  <div id="mus" style="display:none;margin-top:10px;font-size:13px;opacity:.8">
+    <button id="mtoggle" style="padding:3px 10px;border-radius:8px;border:1px solid #8886;background:none;color:inherit;font-size:13px;cursor:pointer">Music on</button>
+    <label style="margin-left:8px">Volume <input id="mvol" type="range" min="0" max="100" value="35" style="vertical-align:middle;width:110px"></label>
+  </div>
 </div>
 <script>
-const P = __PHASES__, S = __SOUNDS__, KEY = "bodylab-timer-" + __ID__;
+const P = __PHASES__, S = __SOUNDS__, M = __MUSIC__, KEY = "bodylab-timer-" + __ID__;
+const music = M ? new Audio(M) : null;
+let musicOn = true;
+if (music) { music.loop = true; $mus(); }
+function $mus() { document.getElementById("mus").style.display = ""; }
+function vol() { return document.getElementById("mvol").value / 100; }
+function musicPlay() { if (music && musicOn) { music.volume = vol(); music.play().catch(() => {}); } }
+function musicStop() { if (music) { music.pause(); music.currentTime = 0; } }
 const total = P.reduce((a, p) => a + p.sec, 0);
 const $ = id => document.getElementById(id);
 let start = null, played = -1, tick = null;
 try { start = Number(localStorage.getItem(KEY)) || null; } catch (e) {}
 function save(v) { try { v ? localStorage.setItem(KEY, v) : localStorage.removeItem(KEY); } catch (e) {} }
-function play(cue) { if (S[cue]) { new Audio(S[cue]).play().catch(() => {}); } }
+function play(cue) {  // the music dips while the voice speaks
+  if (!S[cue]) return;
+  const a = new Audio(S[cue]);
+  if (music) { music.volume = vol() * 0.35; a.onended = () => { music.volume = vol(); }; }
+  a.play().catch(() => {});
+}
 function fmt(s) { s = Math.max(0, Math.ceil(s)); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); }
 function render() {
   if (!start) { $("label").textContent = "Ready"; $("clock").textContent = fmt(P[0].sec); $("bar").style.width = "0";
@@ -165,9 +208,16 @@ function render() {
   if (i > played) { if (played >= 0 || t < 3) play(P[i].cue); played = i; }  // after a reload, don't replay an old cue
   $("label").textContent = P[i].label; $("clock").textContent = fmt(P[i].sec - t);
 }
-function stop(reset) { clearInterval(tick); tick = null; save(null); if (reset) { start = null; played = -1; render(); }
+function stop(reset) { clearInterval(tick); tick = null; save(null); if (reset) musicStop(); else setTimeout(musicStop, 8000); if (reset) { start = null; played = -1; render(); }
                        else { start = null; $("go").style.display = ""; $("stop").style.display = "none"; } }
-$("go").onclick = () => { start = Date.now(); played = -1; save(start); render(); tick = setInterval(render, 500); };
+$("go").onclick = () => { start = Date.now(); played = -1; save(start); musicPlay(); render(); tick = setInterval(render, 500); };
+if (music) {
+  $("mtoggle").onclick = () => { musicOn = !musicOn; $("mtoggle").textContent = musicOn ? "Music on" : "Music off";
+                                 musicOn && start ? musicPlay() : music.pause(); };
+  $("mvol").oninput = () => { music.volume = vol(); };
+  // after a reload mid-meditation the browser needs a click before sound can play again
+  document.getElementById("t").addEventListener("click", () => { if (start && musicOn && music.paused) musicPlay(); });
+}
 $("stop").onclick = () => stop(true);
 render(); if (start) tick = setInterval(render, 500);
 </script>

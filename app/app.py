@@ -472,6 +472,12 @@ def _speak_cached(text: str) -> bytes | None:
     return cache[text]
 
 
+@st.cache_data(show_spinner=False, max_entries=8)
+def _meditation_music(prompt: str) -> bytes | None:
+    """One ElevenLabs track per practice, shared by every visitor of this app process (music uses many credits)."""
+    return meditation.compose_music(prompt)
+
+
 def mindfulness_tab() -> None:
     st.markdown("## Mindfulness")
     st.caption("Guided meditations, written by Gemini and read aloud by ElevenLabs.")
@@ -485,9 +491,11 @@ def mindfulness_tab() -> None:
     st.markdown("### Guided meditation")
     practice = meditation.PRACTICES[st.radio("Practice", list(meditation.PRACTICES), horizontal=True,
                                              format_func=lambda k: meditation.PRACTICES[k].name, key="med_practice")]
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns([2, 2, 3])
     minutes = c1.number_input("Minutes per round", 1, 60, practice.round_min, key=f"mm_{practice.key}")
     rounds = c2.number_input("Rounds", 1, 8, practice.rounds, key=f"mn_{practice.key}")
+    with_music = c3.checkbox("Background music", value=True, key="med_music",
+                             help="An instrumental track from ElevenLabs Music, looped quietly under the voice.")
     session_key = f"meditation_{pid}_{practice.key}"
     pending = f"meditation_pending_{practice.key}"
     st.button(f"Prepare {practice.name.lower()}", key=f"prep_{practice.key}", on_click=_ask, args=(pending,))
@@ -501,8 +509,15 @@ def mindfulness_tab() -> None:
                         audio[c] = _speak_cached(cues[c])
                     except Exception as exc:
                         note = f"Voice unavailable: {exc}"
-            st.session_state[session_key] = {"cues": cues, "audio": audio, "note": note,
-                                             "plan": (int(minutes), int(rounds))}
+            music, music_note = None, ""
+            if with_music and elevenlabs_api_key():
+                with st.spinner("Composing background music (this can take a minute)…"):
+                    try:
+                        music = _meditation_music(practice.music)
+                    except Exception as exc:
+                        music_note = f"Background music unavailable: {exc}"
+            st.session_state[session_key] = {"cues": cues, "audio": audio, "note": note, "music": music,
+                                             "music_note": music_note, "plan": (int(minutes), int(rounds))}
         finally:
             st.session_state[pending] = False
     prepared = st.session_state.get(session_key)
@@ -510,7 +525,10 @@ def mindfulness_tab() -> None:
         m, n = prepared["plan"]
         if (m, n) != (minutes, rounds):
             st.caption("Settings changed: prepare the meditation again to use them.")
-        components.html(meditation.timer_html(practice, m, n, prepared["audio"], f"{pid}-{practice.key}"), height=200)
+        components.html(meditation.timer_html(practice, m, n, prepared["audio"], f"{pid}-{practice.key}",
+                                              music=prepared.get("music")), height=235)
+        if prepared.get("music_note"):
+            st.caption(prepared["music_note"])
         if prepared["note"]:
             st.caption(prepared["note"])
         elif not any(prepared["audio"].values()):
